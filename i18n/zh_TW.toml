@@ -1,0 +1,41 @@
+# DupriMan 翻譯 — 繁體中文
+
+title = "雙面列印"
+message = "將紙取出印表機，不要調整方向，直接插入進紙槽"
+ok_label = "確定"
+cancel_label = "取消"
+
+# 彈窗中的任務詳情。佔位符：{job_id} {title} {total} {evens}
+detail = "工作 #{job_id}《{title}》共 {total} 頁：已列印全部正面，待列印背面 {evens} 頁。"
+detail_with_blank = "工作 #{job_id}《{title}》共 {total} 頁：已列印全部正面，待列印背面 {evens} 頁 + 1 空白頁。"
+
+# CLI 提示
+cli_job_completed = "工作完成"
+cli_waiting_confirmation = "等待使用者確認（請將已列印的紙原樣放回進紙槽）…"
+cli_user_confirmed = "使用者已確認，繼續列印背面"
+cli_printing_fronts = "列印正面（{pages} 頁 × {copies} 份）"
+cli_printing_backs = "列印背面（{pages} 頁 × {copies} 份）"
+cli_printing_backs_blank = "列印背面（{pages} 頁 + 1 空白頁 × {copies} 份，倒序）"
+cli_saved_test = "已儲存到 {path}（測試模式，原文件 {total} 頁，未列印）"
+cli_submitted = "已提交到 {printer}：{job}（原文件 {total} 頁）"
+cli_prompt_disabled = "設定為不彈窗，直接列印背面"
+cli_single_page = "僅 1 頁，無需雙面，直接列印"
+cli_daemon_started = "守護行程已啟動，監聽 {dir}"
+cli_confirmation_request = "收到確認請求：工作 #{job_id}《{title}》，彈窗等待使用者操作"
+cli_failed_write_response = "寫入回應失敗: {error}"
+cli_no_display = "未偵測到顯示環境變數，自動使用 WAYLAND_DISPLAY={name}"
+cli_install_plan = "DupriMan 安裝計畫："
+cli_uninstall_plan = "DupriMan 解除安裝計畫："
+cli_done_confirm = "完成。請確認彈窗服務已啟動：systemctl --user status dupriman-prompt"
+cli_all_passed = "全部通過 ✔"
+cli_checks_failed = "{failed} 項未通過 ✘"
+
+# PPD（虛擬印表機描述）翻譯
+ppd_page_size = "紙張大小"
+ppd_page_size_a4 = "A4"
+ppd_page_size_letter = "Letter"
+ppd_page_size_legal = "Legal"
+ppd_duplex = "雙面列印"
+ppd_duplex_none = "單面"
+ppd_duplex_long_edge = "長邊翻轉"
+ppd_duplex_short_edge = "短邊翻轉"

@@ -1,0 +1,42 @@
+# DupriMan translations — English (US) [fallback language]
+
+title = "Duplex Printing"
+message = "Take the paper out of the printer and insert it into the paper tray without changing its orientation."
+ok_label = "OK"
+cancel_label = "Cancel"
+
+# Backend detail message shown in the dialog. Placeholders:
+#   {job_id} {title} {total} {evens}
+detail = "Job #{job_id} \"{title}\" ({total} pages): all fronts printed, {evens} back pages pending."
+detail_with_blank = "Job #{job_id} \"{title}\" ({total} pages): all fronts printed, {evens} back pages + 1 blank page pending."
+
+# CLI messages
+cli_job_completed = "Job completed"
+cli_waiting_confirmation = "Waiting for user confirmation (please reinsert the printed paper as-is)..."
+cli_user_confirmed = "User confirmed, continuing with backs"
+cli_printing_fronts = "Printing fronts ({pages} pages × {copies} copies)"
+cli_printing_backs = "Printing backs ({pages} pages × {copies} copies)"
+cli_printing_backs_blank = "Printing backs ({pages} pages + 1 blank × {copies} copies, reversed)"
+cli_saved_test = "Saved to {path} (test mode, {total} pages original, not printed)"
+cli_submitted = "Submitted to {printer}: {job} (original document: {total} pages)"
+cli_prompt_disabled = "Prompt disabled in config, printing backs directly"
+cli_single_page = "Only 1 page, no duplex needed, printing directly"
+cli_daemon_started = "Daemon started, watching {dir}"
+cli_confirmation_request = "Confirmation request: job #{job_id} \"{title}\", showing dialog"
+cli_failed_write_response = "Failed to write response: {error}"
+cli_no_display = "No display env var found, auto-detecting WAYLAND_DISPLAY={name}"
+cli_install_plan = "DupriMan install plan:"
+cli_uninstall_plan = "DupriMan uninstall plan:"
+cli_done_confirm = "Done. Please confirm the prompt daemon is running: systemctl --user status dupriman-prompt"
+cli_all_passed = "All checks passed ✔"
+cli_checks_failed = "{failed} check(s) failed ✘"
+
+# PPD (virtual printer description) translations
+ppd_page_size = "Page Size"
+ppd_page_size_a4 = "A4"
+ppd_page_size_letter = "Letter"
+ppd_page_size_legal = "Legal"
+ppd_duplex = "Duplex"
+ppd_duplex_none = "Off (single-sided)"
+ppd_duplex_long_edge = "On (long-edge)"
+ppd_duplex_short_edge = "On (short-edge)"
