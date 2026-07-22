@@ -170,15 +170,16 @@ cupstestppd <(./target/debug/dupriman ppd)   # Validate PPD
 
 ### Adding a new language
 
-1. Create `i18n/<locale>.toml` from `i18n/en_US.toml` (e.g. `i18n/ja_JP.toml`) and translate all keys.
-2. Register in `src/i18n.rs`:
+1. Create `i18n/<locale>.toml` from `i18n/en_US.toml` and translate all keys.
+2. Register in `src/i18n.rs` (all in one place):
    - `Lang` enum: add variant with serde rename + alias
+   - `Lang::ALL`: add the new variant
    - `Lang::from_env()`: add language detection from `LANG`/`LC_ALL`
    - `Lang::file_stem()`: map to the locale filename stem
-   - `load_all()` loop: add the new variant
+   - `Lang::raw_toml()`: add `include_str!("../i18n/<stem>.toml")` arm
 3. Update the language table in [Internationalization](#internationalization-i18n) (optional).
 
-Missing keys fall back to `en_US` automatically. The `install` command picks up all `i18n/*.toml` files — no install script changes needed.
+Missing keys fall back to `en_US` automatically. `install` reads the language list from `Lang::ALL`, so no install script changes are needed.
 
 ### Tested hardware
 

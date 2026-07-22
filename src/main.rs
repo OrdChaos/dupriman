@@ -112,7 +112,7 @@ fn main() {
             "direct \"{}\" \"DupriMan\" \"{}\" \"MFG:DupriMan;MDL:Manual Duplex;\"",
             cfg.printer.virtual_uri, cfg.printer.virtual_info
         );
-        eprintln!("（以上是 CUPS 后端发现输出；日常使用请运行 dupriman --help）");
+        eprintln!("{}", cfg.prompt.cli("cli_cups_discovery_note"));
         return;
     }
 
@@ -123,14 +123,14 @@ fn main() {
         Some(Cmd::Backend { args }) => match backend::BackendArgs::from_cups_args(&args) {
             Ok(a) => backend::run(&cfg, a),
             Err(e) => {
-                eprintln!("参数错误: {e:#}");
+                eprintln!("{}: {e:#}", cfg.prompt.cli("cli_args_error"));
                 2
             }
         },
         Some(Cmd::Prompt) => match promptd::run(&cfg) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("[dupriman-prompt] 启动失败: {e:#}");
+                eprintln!("{}: {e:#}", cfg.prompt.cli("cli_prompt_failed"));
                 1
             }
         },
@@ -152,7 +152,7 @@ fn main() {
         ) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("安装失败: {e:#}");
+                eprintln!("{}: {e:#}", cfg.prompt.cli("cli_install_failed"));
                 1
             }
         },
@@ -175,7 +175,7 @@ fn main() {
         {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("卸载失败: {e:#}");
+                eprintln!("{}: {e:#}", cfg.prompt.cli("cli_uninstall_failed"));
                 1
             }
         },
@@ -197,7 +197,7 @@ fn load_config(extra: Option<&std::path::Path>) -> Config {
     match Config::load(extra) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("警告：配置加载失败，使用默认值: {e:#}");
+            eprintln!("{}: {e:#}", load_config(None).prompt.cli("cli_config_warning"));
             Config::default()
         }
     }
@@ -215,7 +215,7 @@ fn self_test(cfg: &Config) -> i32 {
         }
     };
 
-    println!("Dependencies:");
+    println!("{}", cfg.prompt.cli("test_dep_header"));
     for (tool, pkg) in [
         ("pdfinfo", "poppler"),
         ("qpdf", "qpdf"),
@@ -223,41 +223,41 @@ fn self_test(cfg: &Config) -> i32 {
         ("lpstat", "cups"),
         ("lpadmin", "cups"),
     ] {
-        check(tool, which(tool), &format!("please install {pkg}"));
+        check(tool, which(tool), &cfg.prompt.cli_fmt("test_dep_hint", &[("pkg", pkg)]));
     }
 
-    println!("Configuration:");
+    println!("{}", cfg.prompt.cli("test_config_header"));
     check(
-        "Config file parses correctly",
+        &cfg.prompt.cli("test_config_label"),
         Config::load(None).is_ok(),
-        "check /etc/dupriman/config.toml syntax",
+        &cfg.prompt.cli("test_config_hint"),
     );
 
-    println!("Printers:");
+    println!("{}", cfg.prompt.cli("test_printers_header"));
     let lpstat_out = std::process::Command::new("lpstat")
         .arg("-v")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
     check(
-        &format!("Real printer {} exists", cfg.printer.real),
+        &cfg.prompt.cli_fmt("test_real_printer_fmt", &[("name", &cfg.printer.real)]),
         lpstat_out.contains(&cfg.printer.real),
-        "run lpstat -v and update printer.real in config",
+        &cfg.prompt.cli("test_real_printer_hint"),
     );
     check(
-        &format!("Virtual printer {} registered", cfg.printer.virtual_name),
+        &cfg.prompt.cli_fmt("test_virtual_printer_fmt", &[("name", &cfg.printer.virtual_name)]),
         lpstat_out.contains(&cfg.printer.virtual_name),
-        "run sudo dupriman install",
+        &cfg.prompt.cli("test_virtual_printer_hint"),
     );
 
-    println!("Runtime:");
+    println!("{}", cfg.prompt.cli("test_runtime_header"));
     let state_ok = std::fs::metadata(&cfg.paths.state_dir)
         .map(|m| m.is_dir())
         .unwrap_or(false);
     check(
-        &format!("State directory {} exists", cfg.paths.state_dir.display()),
+        &cfg.prompt.cli_fmt("test_state_dir_fmt", &[("path", &cfg.paths.state_dir.display().to_string())]),
         state_ok,
-        "run sudo dupriman install",
+        &cfg.prompt.cli("test_state_dir_hint"),
     );
     let svc = std::process::Command::new("systemctl")
         .args(["--user", "is-active", "dupriman-prompt.service"])
@@ -265,9 +265,9 @@ fn self_test(cfg: &Config) -> i32 {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
         .unwrap_or(false);
     check(
-        "Prompt daemon running",
+        &cfg.prompt.cli("test_prompt_label"),
         svc,
-        "run systemctl --user start dupriman-prompt",
+        &cfg.prompt.cli("test_prompt_hint"),
     );
 
     if failed == 0 {

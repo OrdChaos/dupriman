@@ -89,7 +89,7 @@ fn run_inner(cfg: &Config, args: &BackendArgs) -> Result<()> {
                 .spool_dir
                 .join(format!("job-{}-input.pdf", args.job_id));
             let mut data = Vec::new();
-            io::stdin().read_to_end(&mut data).context("读取 stdin 失败")?;
+            io::stdin().read_to_end(&mut data).context(cfg.prompt.cli("backend_stdin_read_failed"))?;
             fs::write(&tmp, data)?;
             tmp
         }
@@ -104,7 +104,11 @@ fn run_inner(cfg: &Config, args: &BackendArgs) -> Result<()> {
     }
 
     let opts = options::parse(&args.options);
-    log(&format!("Total {total} pages, mode: {}", opts.mode));
+    log(&format!("Total {total} pages, mode: {}", cfg.prompt.cli(match opts.mode {
+        DuplexMode::Simplex => "duplex_simplex",
+        DuplexMode::LongEdge => "duplex_long_edge",
+        DuplexMode::ShortEdge => "duplex_short_edge",
+    })));
 
     let mut forward: Vec<(String, String)> = cfg
         .print
@@ -231,10 +235,10 @@ fn confirm_or_abort(cfg: &Config, args: &BackendArgs, detail: &str) -> Result<()
             Ok(())
         }
         WaitOutcome::Declined(reason) => {
-            bail!("User cancelled back-side printing ({reason}). Fronts already printed; please handle the paper manually.")
+            bail!(cfg.prompt.cli_fmt("backend_user_cancelled", &[("reason", &reason)]))
         }
         WaitOutcome::Timeout => {
-            bail!("Confirmation timed out, back-side printing cancelled. Please check that the dupriman prompt daemon is running (systemctl --user status dupriman-prompt).")
+            bail!(cfg.prompt.cli("backend_timeout"))
         }
     }
 }
@@ -286,7 +290,7 @@ fn print_and_wait(
     )?;
     if !ok {
         print::cancel(&job).ok();
-        bail!("Print job timed out ({job}), cancellation attempted");
+        bail!(cfg.prompt.cli_fmt("backend_print_timeout", &[("job", &job)]));
     }
     Ok(())
 }

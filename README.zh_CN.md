@@ -170,15 +170,16 @@ cupstestppd <(./target/debug/dupriman ppd)   # 验证 PPD
 
 ### 添加新语言
 
-1. 从 `i18n/en_US.toml` 复制创建 `i18n/<locale>.toml`（如 `i18n/ja_JP.toml`），翻译所有键。
-2. 在 `src/i18n.rs` 中注册：
+1. 从 `i18n/en_US.toml` 复制创建 `i18n/<locale>.toml`，翻译所有键。
+2. 在 `src/i18n.rs` 中注册（全部集中在一处）：
    - `Lang` 枚举：添加变体，带上 serde rename 和 alias
+   - `Lang::ALL`：加入新变体
    - `Lang::from_env()`：添加从 `LANG`/`LC_ALL` 检测语言的逻辑
    - `Lang::file_stem()`：映射到语言文件名
-   - `load_all()` 循环：加入新变体
+   - `Lang::raw_toml()`：添加 `include_str!("../i18n/<stem>.toml")` 分支
 3. 更新[国际化](#国际化i18n)中的语言表（可选）。
 
-缺失的键会自动回退到 `en_US`。`install` 命令会自动收集所有 `i18n/*.toml` 文件——无需修改安装脚本。
+缺失的键会自动回退到 `en_US`。`install` 通过 `Lang::ALL` 自动发现所有语言，无需修改安装脚本。
 
 ### 已测试硬件
 

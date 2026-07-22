@@ -108,22 +108,22 @@ fn euid() -> Option<u32> {
     line.split_whitespace().nth(2)?.parse().ok()
 }
 
-fn require_root(opts: &InstallOpts) -> Result<()> {
+fn require_root(opts: &InstallOpts, cfg: &Config) -> Result<()> {
     if opts.root == Path::new("/") && !opts.dry_run && euid() != Some(0) {
-        bail!("Installing to system directories requires root privileges, please use sudo (use --root for packaging)");
+        bail!("{}", cfg.prompt.cli("install_root_required"));
     }
     Ok(())
 }
 
 pub fn install(cfg: &Config, opts: &InstallOpts) -> Result<()> {
-    require_root(opts)?;
+    require_root(opts, cfg)?;
     let mut plan = Plan::new();
 
     if !opts.activate_only {
         // 1. 二进制
         let exe = std::env::current_exe().context("无法定位当前可执行文件")?;
         let bin = under(&opts.root, BIN_DEST);
-        plan.note(format!("Installing binary {} -> {}", exe.display(), bin.display()));
+        plan.note(cfg.prompt.cli_fmt("install_binary", &[("src", &exe.display().to_string()), ("dst", &bin.display().to_string())]));
         run(opts, &mut plan, || {
             ensure_parent(&bin)?;
             fs::copy(&exe, &bin)?;
@@ -133,7 +133,7 @@ pub fn install(cfg: &Config, opts: &InstallOpts) -> Result<()> {
 
         // 2. CUPS 后端符号链接
         let backend = under(&opts.root, BACKEND_DEST);
-        plan.note(format!("Creating backend symlink {} -> /{}", backend.display(), BIN_DEST));
+        plan.note(cfg.prompt.cli_fmt("install_backend_symlink", &[("dst", &backend.display().to_string()), ("src", BIN_DEST)]));
         run(opts, &mut plan, || {
             ensure_parent(&backend)?;
             fs::remove_file(&backend).ok();
@@ -143,7 +143,7 @@ pub fn install(cfg: &Config, opts: &InstallOpts) -> Result<()> {
 
         // 3. PPD
         let ppd_path = under(&opts.root, PPD_DEST);
-        plan.note(format!("Writing PPD {}", ppd_path.display()));
+        plan.note(cfg.prompt.cli_fmt("install_ppd", &[("path", &ppd_path.display().to_string())]));
         run(opts, &mut plan, || {
             ensure_parent(&ppd_path)?;
             fs::write(&ppd_path, ppd::generate(cfg))?;
@@ -153,9 +153,9 @@ pub fn install(cfg: &Config, opts: &InstallOpts) -> Result<()> {
         // 4. 系统级配置（不存在才写）
         let conf = under(&opts.root, CONFIG_DEST);
         if conf.exists() && !opts.force {
-            plan.note(format!("Config exists, skipping {} (use --force to overwrite)", conf.display()));
+            plan.note(cfg.prompt.cli_fmt("install_config_skip", &[("path", &conf.display().to_string())]));
         } else {
-            plan.note(format!("Writing config {}", conf.display()));
+            plan.note(cfg.prompt.cli_fmt("install_config_write", &[("path", &conf.display().to_string())]));
             run(opts, &mut plan, || {
                 ensure_parent(&conf)?;
                 fs::write(&conf, Config::sample_toml())?;
@@ -165,7 +165,7 @@ pub fn install(cfg: &Config, opts: &InstallOpts) -> Result<()> {
 
         // 5. systemd --user 服务
         let unit = under(&opts.root, UNIT_DEST);
-        plan.note(format!("Writing service {}", unit.display()));
+        plan.note(cfg.prompt.cli_fmt("install_service", &[("path", &unit.display().to_string())]));
         run(opts, &mut plan, || {
             ensure_parent(&unit)?;
             fs::write(&unit, systemd_unit())?;
@@ -174,7 +174,7 @@ pub fn install(cfg: &Config, opts: &InstallOpts) -> Result<()> {
 
         // 6. tmpfiles
         let tmpf = under(&opts.root, TMPFILES_DEST);
-        plan.note(format!("Writing tmpfiles {}", tmpf.display()));
+        plan.note(cfg.prompt.cli_fmt("install_tmpfiles", &[("path", &tmpf.display().to_string())]));
         run(opts, &mut plan, || {
             ensure_parent(&tmpf)?;
             fs::write(&tmpf, tmpfiles_conf(cfg))?;
@@ -183,24 +183,19 @@ pub fn install(cfg: &Config, opts: &InstallOpts) -> Result<()> {
 
         // 7. i18n locale files
         let i18n_dir = under(&opts.root, I18N_DIR);
-        plan.note(format!("Installing i18n files to {}", i18n_dir.display()));
+        plan.note(cfg.prompt.cli_fmt("install_i18n", &[("path", &i18n_dir.display().to_string())]));
         run(opts, &mut plan, || {
             fs::create_dir_all(&i18n_dir)?;
-            for stem in ["en_US", "zh_CN", "zh_TW"] {
-                let content = match stem {
-                    "en_US" => include_str!("../i18n/en_US.toml"),
-                    "zh_CN" => include_str!("../i18n/zh_CN.toml"),
-                    "zh_TW" => include_str!("../i18n/zh_TW.toml"),
-                    _ => unreachable!(),
-                };
-                fs::write(i18n_dir.join(format!("{stem}.toml")), content)?;
+            for &lang in crate::i18n::Lang::ALL {
+                let stem = lang.file_stem();
+                fs::write(i18n_dir.join(format!("{stem}.toml")), lang.raw_toml())?;
             }
             Ok(())
         })?;
     }
 
     if opts.no_activate {
-        plan.note("(--no-activate: skipping activation steps)".to_string());
+        plan.note(cfg.prompt.cli("install_no_activate"));
     } else {
         activate(cfg, opts, &mut plan)?;
     }
@@ -217,11 +212,7 @@ pub fn install(cfg: &Config, opts: &InstallOpts) -> Result<()> {
 
 fn activate(cfg: &Config, opts: &InstallOpts, plan: &mut Plan) -> Result<()> {
     // 状态/临时目录（等效 systemd-tmpfiles --create）
-    plan.note(format!(
-        "Creating directories {} and {} (1777)",
-        cfg.paths.state_dir.display(),
-        cfg.paths.spool_dir.display()
-    ));
+    plan.note(cfg.prompt.cli_fmt("install_dirs", &[("state", &cfg.paths.state_dir.display().to_string()), ("spool", &cfg.paths.spool_dir.display().to_string())]));
     run(opts, plan, || {
         for d in [&cfg.paths.state_dir, &cfg.paths.spool_dir] {
             fs::create_dir_all(d)?;
@@ -231,10 +222,7 @@ fn activate(cfg: &Config, opts: &InstallOpts, plan: &mut Plan) -> Result<()> {
     })?;
 
     // Register virtual printer
-    plan.note(format!(
-        "lpadmin registering virtual printer {} ({})",
-        cfg.printer.virtual_name, cfg.printer.real
-    ));
+    plan.note(cfg.prompt.cli_fmt("install_lpadmin", &[("name", &cfg.printer.virtual_name), ("real", &cfg.printer.real)]));
     run(opts, plan, || {
         let out = Command::new("lpadmin")
             .args(["-p", &cfg.printer.virtual_name])
@@ -251,7 +239,7 @@ fn activate(cfg: &Config, opts: &InstallOpts, plan: &mut Plan) -> Result<()> {
     })?;
 
     // 全局启用弹窗服务（对所有用户）
-    plan.note("systemctl --global enable dupriman-prompt.service".to_string());
+    plan.note(cfg.prompt.cli("install_systemctl_enable"));
     run(opts, plan, || {
         let out = Command::new("systemctl")
             .args(["--global", "enable", "dupriman-prompt.service"])
@@ -260,8 +248,8 @@ fn activate(cfg: &Config, opts: &InstallOpts, plan: &mut Plan) -> Result<()> {
         if !out.status.success() {
             // 非致命：可能某些环境不支持 --global
             eprintln!(
-                "Warning: systemctl --global enable failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
+                "{}",
+                cfg.prompt.cli_fmt("install_systemctl_warn", &[("msg", &String::from_utf8_lossy(&out.stderr).trim().to_string())])
             );
         }
         Ok(())
@@ -270,11 +258,11 @@ fn activate(cfg: &Config, opts: &InstallOpts, plan: &mut Plan) -> Result<()> {
 }
 
 pub fn uninstall(cfg: &Config, opts: &InstallOpts, purge: bool) -> Result<()> {
-    require_root(opts)?;
+    require_root(opts, cfg)?;
     let mut plan = Plan::new();
 
     if !opts.no_activate {
-        plan.note(format!("Removing CUPS printer {}", cfg.printer.virtual_name));
+        plan.note(cfg.prompt.cli_fmt("uninstall_lpadmin", &[("name", &cfg.printer.virtual_name)]));
         run(opts, &mut plan, || {
             let out = Command::new("lpadmin")
                 .args(["-x", &cfg.printer.virtual_name])
@@ -282,13 +270,13 @@ pub fn uninstall(cfg: &Config, opts: &InstallOpts, purge: bool) -> Result<()> {
                 .context("无法执行 lpadmin")?;
             if !out.status.success() {
                 eprintln!(
-                    "Warning: lpadmin -x failed: {}",
-                    String::from_utf8_lossy(&out.stderr).trim()
+                    "{}",
+                    cfg.prompt.cli_fmt("uninstall_lpadmin_warn", &[("msg", &String::from_utf8_lossy(&out.stderr).trim().to_string())])
                 );
             }
             Ok(())
         })?;
-        plan.note("systemctl --global disable dupriman-prompt.service".to_string());
+        plan.note(cfg.prompt.cli("uninstall_systemctl_disable"));
         run(opts, &mut plan, || {
             Command::new("systemctl")
                 .args(["--global", "disable", "dupriman-prompt.service"])
@@ -300,14 +288,14 @@ pub fn uninstall(cfg: &Config, opts: &InstallOpts, purge: bool) -> Result<()> {
 
     for rel in [BACKEND_DEST, PPD_DEST, UNIT_DEST, TMPFILES_DEST] {
         let p = under(&opts.root, rel);
-        plan.note(format!("Removing {}", p.display()));
+        plan.note(cfg.prompt.cli_fmt("uninstall_removing", &[("path", &p.display().to_string())]));
         run(opts, &mut plan, || {
             fs::remove_file(&p).ok();
             Ok(())
         })?;
     }
     let i18n_dir = under(&opts.root, I18N_DIR);
-    plan.note(format!("Removing {}", i18n_dir.display()));
+    plan.note(cfg.prompt.cli_fmt("uninstall_removing", &[("path", &i18n_dir.display().to_string())]));
     run(opts, &mut plan, || {
         fs::remove_dir_all(&i18n_dir).ok();
         Ok(())
@@ -315,14 +303,14 @@ pub fn uninstall(cfg: &Config, opts: &InstallOpts, purge: bool) -> Result<()> {
     if purge {
         for rel in [BIN_DEST, CONFIG_DEST] {
             let p = under(&opts.root, rel);
-            plan.note(format!("Removing {}", p.display()));
+            plan.note(cfg.prompt.cli_fmt("uninstall_removing", &[("path", &p.display().to_string())]));
             run(opts, &mut plan, || {
                 fs::remove_file(&p).ok();
                 Ok(())
             })?;
         }
     } else {
-        plan.note(format!("Keeping /{BIN_DEST} and /{CONFIG_DEST} (use --purge to remove)"));
+        plan.note(cfg.prompt.cli_fmt("uninstall_keeping", &[("bin", BIN_DEST), ("conf", CONFIG_DEST)]));
     }
 
     println!("{}", cfg.prompt.cli("cli_uninstall_plan"));
@@ -341,7 +329,7 @@ fn ensure_parent(p: &Path) -> Result<()> {
 
 fn run(opts: &InstallOpts, plan: &mut Plan, f: impl FnOnce() -> Result<()>) -> Result<()> {
     if opts.dry_run {
-        plan.note("  （dry-run，未执行）");
+        plan.note(crate::i18n::texts(crate::i18n::Lang::from_env()).cli_dry_run_note.clone());
         return Ok(());
     }
     f()
