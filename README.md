@@ -74,6 +74,8 @@ dupriman test   # environment self-check
 
 ## Configuration
 
+**You should add your physical printer by yourself with CUPS first.**
+
 System-wide: `/etc/dupriman/config.toml`; user-level override: `~/.config/dupriman/config.toml`
 (only write fields you want to override). Full annotated example: `dupriman sample-config`.
 
@@ -81,6 +83,8 @@ Key options (defaults work for most face-down-output laser printers):
 
 ```toml
 [printer]
+#Special value "save pdf": Do not print, save sub jobs to spool-dir/saved/(test mode, default)
+#When printing on a real machine, change to the actual queue name, such as "HP_LaserJet_1020" (check with lpstat -v)
 real = "HP_LaserJet_1020"        # Real printer queue name, check with lpstat -v
 
 [duplex]
@@ -153,6 +157,14 @@ After fronts are printed, **do not flip or reorder** — take the stack from the
 - Debug split results: set `print.keep_temp = true`; temporary PDFs are kept in `paths.spool_dir`.
 
 ## Uninstallation
+
+### Arch Linux:
+
+```bash
+paru -Rns dupriman-git
+```
+
+### Others
 
 ```bash
 sudo dupriman uninstall            # Remove printer/service/system files, keep config

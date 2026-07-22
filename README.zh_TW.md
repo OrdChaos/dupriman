@@ -75,6 +75,8 @@ dupriman test   # 環境自檢
 
 ## 設定
 
+**你應當先使用CUPS添加你的真實印表機。**
+
 系統級：`/etc/dupriman/config.toml`；使用者級覆蓋：`~/.config/dupriman/config.toml`
 （只需寫入要覆蓋的欄位）。完整註解範例：`dupriman sample-config`。
 
@@ -155,6 +157,14 @@ cancel_label = "停止"
 - 偵錯拆分結果：設定 `print.keep_temp = true`；暫存 PDF 將保留在 `paths.spool_dir` 中。
 
 ## 解除安裝
+
+### Arch Linux:
+
+```bash
+paru -Rns dupriman-git
+```
+
+### 其他
 
 ```bash
 sudo dupriman uninstall            # 移除印表機/服務/系統檔案，保留設定
