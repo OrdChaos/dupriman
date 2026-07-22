@@ -18,7 +18,7 @@ flowchart LR
     B --> C[dupriman backend<br/>CUPS backend process]
     C -->|qpdf split| D[Front PDF<br/>odd pages]
     C -->|qpdf split + reverse/rotate| E[Back PDF<br/>even pages]
-    D --> F[Real printer queue<br/>HP_LaserJet_1020]
+    D --> F[Real printer queue]
     C -->|write request /run/dupriman| G[dupriman prompt<br/>GTK prompt daemon<br/>systemd --user]
     G -->|user clicks OK| C
     E --> F
@@ -65,15 +65,6 @@ Then start (or re-login) the prompt service:
 systemctl --user start dupriman-prompt
 dupriman test   # environment self-check
 ```
-
-### Arch packaging
-
-```bash
-cd packaging && makepkg -si
-```
-
-`package()` uses `dupriman install --root "$pkgdir" --no-activate`,
-and `post_install` uses `--activate-only` to finish registration.
 
 ## Configuration
 
@@ -185,6 +176,6 @@ Missing keys fall back to `en_US` automatically. `install` reads the language li
 
 ### Tested hardware
 
-This software has only been tested on **HP LaserJet 1020** with the **foo2zjs** driver.
+This software has only been tested on **HP LaserJet 1020** with the **foo2zjs** driver in **Arch Linux**.
 If you test it on other printer models or drivers, please report your results or send a PR, 
 especially the correct `even_order` and `even_rotate` values for your setup.

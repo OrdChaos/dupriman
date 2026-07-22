@@ -18,7 +18,7 @@ flowchart LR
     B --> C[dupriman 後端<br/>CUPS 後端行程]
     C -->|qpdf 拆分| D[正面 PDF<br/>奇數頁]
     C -->|qpdf 拆分 + 倒序/旋轉| E[背面 PDF<br/>偶數頁]
-    D --> F[真實印表機佇列<br/>HP_LaserJet_1020]
+    D --> F[真實印表機佇列]
     C -->|寫入請求到 /run/dupriman| G[dupriman prompt<br/>GTK 彈窗守護行程<br/>systemd --user]
     G -->|使用者點擊確定| C
     E --> F
@@ -178,6 +178,6 @@ cupstestppd <(./target/debug/dupriman ppd)   # 驗證 PPD
 
 ### 已測試硬體
 
-本軟體僅在 **HP LaserJet 1020** + **foo2zjs** 驅動上測試過。
+本軟體僅在 **Arch Linux** 上的 **HP LaserJet 1020** + **foo2zjs** 驅動上測試過。
 如果你在其他印表機型號或驅動上測試，歡迎回報結果或提交 PR，
 尤其是適合你裝置的 `even_order` 和 `even_rotate` 設定值。

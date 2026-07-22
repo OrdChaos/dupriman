@@ -18,7 +18,7 @@ flowchart LR
     B --> C[dupriman 后端<br/>CUPS 后端进程]
     C -->|qpdf 拆分| D[正面 PDF<br/>奇数页]
     C -->|qpdf 拆分 + 倒序/旋转| E[背面 PDF<br/>偶数页]
-    D --> F[真实打印机队列<br/>HP_LaserJet_1020]
+    D --> F[真实打印机队列]
     C -->|写入请求到 /run/dupriman| G[dupriman prompt<br/>GTK 弹窗守护进程<br/>systemd --user]
     G -->|用户点击确定| C
     E --> F
@@ -65,15 +65,6 @@ sudo ./target/release/dupriman install
 systemctl --user start dupriman-prompt
 dupriman test   # 环境自检
 ```
-
-### Arch 打包
-
-```bash
-cd packaging && makepkg -si
-```
-
-`package()` 使用 `dupriman install --root "$pkgdir" --no-activate`，
-`post_install` 使用 `--activate-only` 完成注册。
 
 ## 配置
 
@@ -187,6 +178,6 @@ cupstestppd <(./target/debug/dupriman ppd)   # 验证 PPD
 
 ### 已测试硬件
 
-本软件仅在 **HP LaserJet 1020** + **foo2zjs** 驱动上测试过。
+本软件仅在 **Arch Linux** 上的 **HP LaserJet 1020** + **foo2zjs** 驱动上测试过。
 如果你在其他打印机型号或驱动上测试，欢迎反馈结果或提交 PR，
 尤其是适合你设备的 `even_order` 和 `even_rotate` 配置值。
