@@ -249,7 +249,7 @@ fn activate(cfg: &Config, opts: &InstallOpts, plan: &mut Plan) -> Result<()> {
             // 非致命：可能某些环境不支持 --global
             eprintln!(
                 "{}",
-                cfg.prompt.cli_fmt("install_systemctl_warn", &[("msg", &String::from_utf8_lossy(&out.stderr).trim().to_string())])
+                cfg.prompt.cli_fmt("install_systemctl_warn", &[("msg", String::from_utf8_lossy(&out.stderr).trim())])
             );
         }
         Ok(())
@@ -271,7 +271,7 @@ pub fn uninstall(cfg: &Config, opts: &InstallOpts, purge: bool) -> Result<()> {
             if !out.status.success() {
                 eprintln!(
                     "{}",
-                    cfg.prompt.cli_fmt("uninstall_lpadmin_warn", &[("msg", &String::from_utf8_lossy(&out.stderr).trim().to_string())])
+                    cfg.prompt.cli_fmt("uninstall_lpadmin_warn", &[("msg", String::from_utf8_lossy(&out.stderr).trim())])
                 );
             }
             Ok(())

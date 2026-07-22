@@ -300,10 +300,10 @@ fn load_all() -> HashMap<&'static str, Texts> {
             "backend_print_timeout",
             "duplex_simplex", "duplex_long_edge", "duplex_short_edge",
         ] {
-            if texts.get(key).is_none() {
-                if let Some(v) = en.get(key) {
-                    set(&mut texts, key, v);
-                }
+            if texts.get(key).is_none()
+                && let Some(v) = en.get(key)
+            {
+                set(&mut texts, key, v);
             }
         }
         map.insert(stem, texts);
@@ -412,19 +412,19 @@ fn load_file(stem: &str) -> Option<Texts> {
     // System-wide installed location
     candidates.push(PathBuf::from("/usr/share/dupriman/i18n").join(&name));
     // Development: <exe>/../../share/dupriman/i18n or ./i18n
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("../share/dupriman/i18n").join(&name));
-            candidates.push(dir.join("../../i18n").join(&name));
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join("../share/dupriman/i18n").join(&name));
+        candidates.push(dir.join("../../i18n").join(&name));
     }
     candidates.push(PathBuf::from("./i18n").join(&name));
 
     for path in candidates {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            if let Ok(t) = toml::from_str(&text) {
-                return Some(t);
-            }
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(t) = toml::from_str(&text)
+        {
+            return Some(t);
         }
     }
     None

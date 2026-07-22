@@ -1,5 +1,7 @@
 # DupriMan — Manual Duplex Printing Assistant
 
+**English** | [简体中文](README.zh_CN.md) | [繁體中文](README.zh_TW.md)
+
 Gives **single-sided printers** a near-automatic duplex experience:
 In any application's print dialog, select the virtual printer **DupriMan-Duplex** and choose
 **Off / Long-edge / Short-edge** duplex. It will:
@@ -140,8 +142,8 @@ Test with a 3–4 page document first.
 In the print dialog, select **DupriMan-Duplex** and choose duplex mode:
 
 - **Off**: forwards directly to the real printer;
-- **Long-edge** (default): for portrait documents flipped along the long edge;
-- **Short-edge**: for landscape documents flipped along the short edge (backs auto-rotated 180°).
+- **Long-edge** (default): for portrait documents flipped along the long edge (backs rotated 180°);
+- **Short-edge**: for landscape documents flipped along the short edge (backs not rotated).
 
 After fronts are printed, **do not flip or reorder** — take the stack from the output tray and reinsert it into the input tray as-is, then click OK.
 

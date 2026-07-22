@@ -12,11 +12,13 @@ pub enum DuplexMode {
 }
 
 impl std::fmt::Display for DuplexMode {
+    /// Technical identifier (English) used in logs and job titles.
+    /// UI translations live in the i18n system, not here.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DuplexMode::Simplex => write!(f, "单面"),
-            DuplexMode::LongEdge => write!(f, "双面-长边翻转"),
-            DuplexMode::ShortEdge => write!(f, "双面-短边翻转"),
+            DuplexMode::Simplex => write!(f, "simplex"),
+            DuplexMode::LongEdge => write!(f, "duplex-long-edge"),
+            DuplexMode::ShortEdge => write!(f, "duplex-short-edge"),
         }
     }
 }

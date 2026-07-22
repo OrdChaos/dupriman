@@ -437,9 +437,11 @@ mod tests {
 
     #[test]
     fn prompt_language_resolution() {
-        let mut cfg = PromptCfg::default();
         // auto 模式跟随环境，测试环境可能是中文，所以只验证非 auto 的显式设置
-        cfg.language = "en".into();
+        let mut cfg = PromptCfg {
+            language: "en".into(),
+            ..Default::default()
+        };
         assert_eq!(cfg.lang(), crate::i18n::Lang::En);
         assert_eq!(cfg.resolved_title(), "Duplex Printing");
         assert_eq!(cfg.resolved_ok_label(), "OK");

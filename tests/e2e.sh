@@ -87,37 +87,38 @@ export MOCK_LOG="$WORK/calls.log"
 export PATH="$WORK/mockbin:$PATH"
 
 echo "=== 场景 1：长边翻转 2 份拷贝 ==="
-"$BIN" --config "$WORK/config.toml" backend 100 alice 报告 2 "Duplex=DuplexNoTumble" "$WORK/doc.pdf"
+"$BIN" --config "$WORK/config.toml" backend 100 alice 报告 2 "Duplex=DuplexNoTumble" "$WORK/doc.pdf" 2>"$WORK/backend.log"
 rc=$?
 kill $WATCHER 2>/dev/null; wait $WATCHER 2>/dev/null
 
 echo "退出码: $rc"
-echo "--- lp 调用记录 ---"
-cat "$MOCK_LOG"
+echo "--- 后端日志 ---"
+cat "$WORK/backend.log" 2>/dev/null || true
 
 pass=1
 [ $rc -eq 0 ] || { echo "FAIL: 退出码非 0"; pass=0; }
-grep -q '（正面）' "$MOCK_LOG" || { echo "FAIL: 缺少正面打印"; pass=0; }
-grep -q '（背面）' "$MOCK_LOG" || { echo "FAIL: 缺少背面打印"; pass=0; }
-[ "$(grep -c 'LP ' "$MOCK_LOG")" -eq 2 ] || { echo "FAIL: lp 调用次数应为 2"; pass=0; }
-grep -q 'LP -d MOCKPRN.*-n 2' "$MOCK_LOG" || { echo "FAIL: 份数未传递"; pass=0; }
-# 正面在前、背面在后
-front_line=$(grep -n '正面' "$MOCK_LOG" | head -1 | cut -d: -f1)
-back_line=$(grep -n '背面' "$MOCK_LOG" | head -1 | cut -d: -f1)
-[ "$front_line" -lt "$back_line" ] || { echo "FAIL: 打印顺序错误"; pass=0; }
-# 确认拆出的 PDF 已被清理（keep_temp=false）
-[ -z "$(ls -A "$WORK/spool" 2>/dev/null)" ] || { echo "FAIL: 临时文件未清理"; pass=0; }
+# save-pdf 模式：正面与背面各保存一个 PDF
+front_pdf=$(ls "$WORK/spool/saved"/job-100--front--2.pdf 2>/dev/null)
+back_pdf=$(ls "$WORK/spool/saved"/job-100--back--2.pdf 2>/dev/null)
+[ -n "$front_pdf" ] || { echo "FAIL: 缺少正面 PDF"; pass=0; }
+[ -n "$back_pdf" ] || { echo "FAIL: 缺少背面 PDF"; pass=0; }
+# 正面 4 页(1,3,5,7)，背面 3+1=4 页(空白+6,4,2)
+[ "$(pdfinfo "$front_pdf" 2>/dev/null | awk '/^Pages:/{print $2}')" = "4" ] || { echo "FAIL: 正面应为 4 页"; pass=0; }
+[ "$(pdfinfo "$back_pdf" 2>/dev/null | awk '/^Pages:/{print $2}')" = "4" ] || { echo "FAIL: 背面应为 4 页(含空白)"; pass=0; }
+# 确认拆出的中间 PDF 已被清理（keep_temp=false），saved 保留
+[ -z "$(ls "$WORK/spool"/*.pdf 2>/dev/null)" ] || { echo "FAIL: 中间临时文件未清理"; pass=0; }
 
 echo "=== 场景 2：单面直通 ==="
-: > "$MOCK_LOG"
-"$BIN" --config "$WORK/config.toml" backend 101 alice 单页文档 1 "Duplex=None" "$WORK/doc.pdf"
+: > "$WORK/backend.log"
+"$BIN" --config "$WORK/config.toml" backend 101 alice 单页文档 1 "Duplex=None" "$WORK/doc.pdf" 2>"$WORK/backend.log"
 rc=$?
-[ $rc -eq 0 ] && [ "$(grep -c 'LP ' "$MOCK_LOG")" -eq 1 ] || { echo "FAIL: 单面应只调用一次 lp"; pass=0; }
-grep -q '（正面）\|（背面）' "$MOCK_LOG" && { echo "FAIL: 单面不应拆分"; pass=0; }
-cat "$MOCK_LOG"
+simplex_pdf=$(ls "$WORK/spool/saved"/job-101-*.pdf 2>/dev/null)
+[ $rc -eq 0 ] && [ -n "$simplex_pdf" ] || { echo "FAIL: 单面应保存 1 个 PDF"; pass=0; }
+# 单面不应有 front/back 后缀
+echo "$simplex_pdf" | grep -q 'front\|back' && { echo "FAIL: 单面不应拆分"; pass=0; }
 
-echo "=== 场景 3：短边翻转（背面需旋转 180）==="
-: > "$MOCK_LOG"
+echo "=== 场景 3：短边翻转（背面不旋转）==="
+: > "$WORK/backend.log"
 (
   for _ in $(seq 1 100); do
     for f in "$WORK/state"/req-*.json; do
@@ -130,34 +131,35 @@ echo "=== 场景 3：短边翻转（背面需旋转 180）==="
   done
 ) &
 WATCHER=$!
-"$BIN" --config "$WORK/config.toml" backend 102 alice 竖版 1 "sides=two-sided-short-edge" "$WORK/doc.pdf"
+"$BIN" --config "$WORK/config.toml" backend 102 alice 竖版 1 "sides=two-sided-short-edge" "$WORK/doc.pdf" 2>"$WORK/backend.log"
 rc=$?
 kill $WATCHER 2>/dev/null; wait $WATCHER 2>/dev/null
 [ $rc -eq 0 ] || { echo "FAIL: 短边翻转退出码非 0"; pass=0; }
-cat "$MOCK_LOG"
+ls "$WORK/spool/saved"/job-102--back--1.pdf >/dev/null 2>&1 || { echo "FAIL: 缺少短边背面 PDF"; pass=0; }
 
 echo "=== 场景 4：用户取消（无守护响应，缩短超时）==="
 cat > "$WORK/config2.toml" <<EOF
 [printer]
-real = "MOCKPRN"
+real = "save-pdf"
 [paths]
 state_dir = "$WORK/state"
 spool_dir = "$WORK/spool"
 [prompt]
 enabled = true
 timeout_secs = 1
+language = "zh_CN"
 [print]
 poll_interval_ms = 50
 EOF
-: > "$MOCK_LOG"
-"$BIN" --config "$WORK/config2.toml" backend 103 alice 取消测试 1 "Duplex=DuplexNoTumble" "$WORK/doc.pdf" 2>"$WORK/stderr.log"
+: > "$WORK/backend.log"
+"$BIN" --config "$WORK/config2.toml" backend 103 alice 取消测试 1 "Duplex=DuplexNoTumble" "$WORK/doc.pdf" 2>"$WORK/backend.log"
 rc=$?
 [ $rc -ne 0 ] || { echo "FAIL: 超时应非 0 退出"; pass=0; }
-grep -q '超时' "$WORK/stderr.log" || { echo "FAIL: 应有超时提示"; pass=0; }
-# 取消后不应有背面打印
-grep -q '背面' "$MOCK_LOG" && { echo "FAIL: 取消后不应打印背面"; pass=0; }
+grep -qi 'timed out\|超时' "$WORK/backend.log" || { echo "FAIL: 应有超时提示"; pass=0; }
+# 取消后不应有背面 PDF
+ls "$WORK/spool/saved"/job-103--back--*.pdf >/dev/null 2>&1 && { echo "FAIL: 取消后不应打印背面"; pass=0; }
 echo "（预期失败，退出码 $rc）"
-grep 'ERROR' "$WORK/stderr.log" | head -2
+grep 'ERROR' "$WORK/backend.log" | head -2
 
 if [ $pass -eq 1 ]; then
   echo; echo "E2E 全部通过 ✔"
