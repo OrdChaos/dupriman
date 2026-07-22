@@ -41,6 +41,12 @@ sudo pacman -S --needed cups qpdf poppler gtk4 rust
 
 ## Installation
 
+### Arch Linux:
+
+```bash
+paru -S dupriman-git
+```
+
 ### From source
 
 ```bash
