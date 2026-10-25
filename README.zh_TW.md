@@ -58,7 +58,7 @@ DupriMan 不會自行安裝檔案、建立 CUPS 佇列、管理執行期目錄�
 
 ```bash
 sudo install -d -o root -g root -m 0711 /run/dupriman
-sudo install -d -o root -g root -m 0700 /var/tmp/dupriman
+sudo install -d -o lp -g lp -m 0700 /var/tmp/dupriman
 sudo install -d -m 0755 /etc/dupriman
 sudo sh -c 'dupriman sample-config > /etc/dupriman/config.toml'
 sudo lpadmin -p dupriman-duplex -v dupriman://duplex \
