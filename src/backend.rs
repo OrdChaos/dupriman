@@ -247,11 +247,11 @@ fn confirm_or_abort(cfg: &Config, args: &BackendArgs, detail: &str) -> Result<()
         detail: detail.to_string(),
     };
     log(&cfg.prompt.cli("cli_waiting_confirmation"));
-    let (dir, identity) = prompt_proto::send_request(&cfg.paths.state_dir, &req)?;
+    let (state, identity) = prompt_proto::send_request(&cfg.paths.state_dir, &req)?;
     let timeout =
         (cfg.prompt.timeout_secs > 0).then(|| Duration::from_secs(cfg.prompt.timeout_secs));
     let outcome = prompt_proto::wait_response(
-        &dir,
+        &state,
         &id,
         &req.capability,
         identity,

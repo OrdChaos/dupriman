@@ -65,9 +65,23 @@ sudo lpadmin -p dupriman-duplex -v dupriman://duplex \
   -P /usr/share/cups/model/dupriman.ppd -E
 ```
 
-設定 `printer.real` 與明確的 `prompt.allowed_users`。CUPS backend 必須以
-root 或提交工作的使用者執行，否則會在列印背面前拒絕工作。最後以所選 init、
-桌面 autostart 或工作階段管理器監管每個允許圖形工作階段中的 `dupriman prompt`。
+設定 `printer.real` 與明確的 `prompt.allowed_users`。CUPS 通常以 `lp` 使用者
+執行 backend。每個允許的帳戶均須建立專用 bridge group 和私有目錄布局；以下以
+`alice` 為例：
+
+```bash
+sudo groupadd --system dupriman-alice
+sudo usermod -a -G dupriman-alice alice
+sudo usermod -a -G dupriman-alice lp
+sudo install -d -o root -g root -m 0711 /run/dupriman/alice
+sudo install -d -o lp -g dupriman-alice -m 2750 /run/dupriman/alice/requests
+sudo install -d -o alice -g dupriman-alice -m 2770 /run/dupriman/alice/responses
+```
+
+backend 以 `lp` 寫入請求，圖形使用者讀取請求並寫入回應。其他本機使用者沒有存取
+權限，且列印背面前仍會驗證回應 UID 與隨機 capability。變更群組成員後需要登出再登入。
+最後以所選 init、桌面 autostart 或工作階段管理器監管每個允許圖形工作階段中的
+`dupriman prompt`。
 
 ## 設定
 

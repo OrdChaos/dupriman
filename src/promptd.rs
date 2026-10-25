@@ -29,8 +29,8 @@ pub fn run(cfg: &Config) -> Result<()> {
     {
         anyhow::bail!("current user is not listed in prompt.allowed_users");
     }
-    let state_dir = prompt_proto::user_dir(&cfg.paths.state_dir, &current_user)?;
-    let state_dir_display = state_dir.display().to_string();
+    let state = prompt_proto::user_state(&cfg.paths.state_dir, &current_user)?;
+    let state_dir_display = state.requests_dir().display().to_string();
     let prompt = cfg.prompt.clone();
     let busy = Rc::new(Cell::new(false));
 
@@ -40,7 +40,7 @@ pub fn run(cfg: &Config) -> Result<()> {
             if busy.get() {
                 return glib::ControlFlow::Continue;
             }
-            let pending = prompt_proto::pending_requests(&state_dir);
+            let pending = prompt_proto::pending_requests(&state);
             let Some((_, req)) = pending.first().cloned() else {
                 return glib::ControlFlow::Continue;
             };
@@ -53,7 +53,7 @@ pub fn run(cfg: &Config) -> Result<()> {
             );
             busy.set(true);
             glib::MainContext::default().spawn_local(show_dialog(
-                state_dir.clone(),
+                state.clone(),
                 req,
                 prompt.clone(),
                 Rc::clone(&busy),
@@ -103,7 +103,7 @@ fn ensure_display_env() {
 }
 
 async fn show_dialog(
-    state_dir: std::path::PathBuf,
+    state: prompt_proto::UserState,
     req: PromptRequest,
     prompt: crate::config::PromptCfg,
     busy: Rc<Cell<bool>>,
@@ -137,7 +137,7 @@ async fn show_dialog(
         confirmed,
         reason,
     };
-    if let Err(e) = prompt_proto::send_response(&state_dir, &resp) {
+    if let Err(e) = prompt_proto::send_response(&state, &resp) {
         eprintln!(
             "[dupriman-prompt] {}",
             prompt.cli_fmt("cli_failed_write_response", &[("error", &format!("{e:#}"))])

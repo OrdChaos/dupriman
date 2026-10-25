@@ -72,11 +72,26 @@ sudo lpadmin -p dupriman-duplex -v dupriman://duplex \
 ```
 
 Set `printer.real` and explicitly list permitted desktop accounts in
-`prompt.allowed_users`.  The CUPS backend must run as root or as the submitting
-user; it otherwise refuses a duplex job before backs can print.  Finally,
-supervise `dupriman prompt` in each permitted graphical session using your init
-system, desktop autostart mechanism, or service manager.  A systemd user unit
-may be useful as a local example, but is not installed or enabled by DupriMan.
+`prompt.allowed_users`.  CUPS normally runs backends as `lp`.  For every
+permitted account, create a dedicated bridge group and the private layout below;
+replace `alice` with that account name:
+
+```bash
+sudo groupadd --system dupriman-alice
+sudo usermod -a -G dupriman-alice alice
+sudo usermod -a -G dupriman-alice lp
+sudo install -d -o root -g root -m 0711 /run/dupriman/alice
+sudo install -d -o lp -g dupriman-alice -m 2750 /run/dupriman/alice/requests
+sudo install -d -o alice -g dupriman-alice -m 2770 /run/dupriman/alice/responses
+```
+
+The backend writes requests as `lp`; the desktop user reads them and writes
+responses.  Other local users receive no access, while response UID and a random
+capability are still verified before backs print.  Log out and back in after
+changing group membership.  Finally, supervise `dupriman prompt` in each
+permitted graphical session using your init system, desktop autostart mechanism,
+or service manager.  A systemd user unit may be useful as a local example, but
+is not installed or enabled by DupriMan.
 
 ## Configuration
 

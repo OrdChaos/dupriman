@@ -1,9 +1,9 @@
 //! Private file protocol between the CUPS backend and the graphical prompt.
 //!
-//! The state root is owned by root (or by the submitting user for direct test
-//! runs).  Each CUPS user receives a private 0700 subdirectory.  Requests and
-//! responses are 0600 and the backend verifies the response owner and a random
-//! capability before printing backs.
+//! Production installations provision a root-owned state layout for every
+//! allowed user.  A dedicated `dupriman-<user>` group bridges CUPS's unprivileged
+//! `lp` account and that one user without exposing job metadata to other users.
+//! Direct single-user test runs retain a private 0700 directory layout.
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -46,12 +46,33 @@ pub struct UserIdentity {
     gid: u32,
 }
 
-fn user_identity(user: &str) -> Result<UserIdentity> {
-    if user.is_empty()
-        || !user
+#[derive(Debug, Clone)]
+pub struct UserState {
+    requests: PathBuf,
+    responses: PathBuf,
+    request_uid: u32,
+    request_gid: Option<u32>,
+    request_mode: u32,
+    response_uid: u32,
+    response_gid: Option<u32>,
+    response_mode: u32,
+}
+
+impl UserState {
+    pub fn requests_dir(&self) -> &Path {
+        &self.requests
+    }
+}
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
+}
+
+fn user_identity(user: &str) -> Result<UserIdentity> {
+    if !valid_name(user) {
         bail!("invalid CUPS user name {user:?}");
     }
     let name = CString::new(user).expect("validated user name contains no NUL");
@@ -59,15 +80,36 @@ fn user_identity(user: &str) -> Result<UserIdentity> {
     if entry.is_null() {
         bail!("CUPS user {user:?} is not a local account");
     }
-    let entry = unsafe { &*entry };
     Ok(UserIdentity {
-        uid: entry.pw_uid,
-        gid: entry.pw_gid,
+        uid: unsafe { (*entry).pw_uid },
+        gid: unsafe { (*entry).pw_gid },
     })
+}
+
+fn account_identity(name: &str) -> Result<(u32, u32)> {
+    let name = CString::new(name).expect("literal contains no NUL");
+    let entry = unsafe { libc::getpwnam(name.as_ptr()) };
+    if entry.is_null() {
+        bail!("required account {:?} does not exist", name);
+    }
+    Ok((unsafe { (*entry).pw_uid }, unsafe { (*entry).pw_gid }))
+}
+
+fn bridge_gid(user: &str) -> Result<u32> {
+    let name = CString::new(format!("dupriman-{user}"))?;
+    let entry = unsafe { libc::getgrnam(name.as_ptr()) };
+    if entry.is_null() {
+        bail!("required bridge group {:?} does not exist", name);
+    }
+    Ok(unsafe { (*entry).gr_gid })
 }
 
 fn euid() -> u32 {
     unsafe { libc::geteuid() }
+}
+
+fn mode_is(metadata: &fs::Metadata, mode: u32) -> bool {
+    metadata.permissions().mode() & 0o7777 == mode
 }
 
 fn secure_state_root(root: &Path, identity: UserIdentity) -> Result<()> {
@@ -96,55 +138,142 @@ fn secure_state_root(root: &Path, identity: UserIdentity) -> Result<()> {
     Ok(())
 }
 
-fn chown(path: &Path, identity: UserIdentity) -> Result<()> {
+fn chown(path: &Path, uid: u32, gid: u32) -> Result<()> {
     let path =
         CString::new(path.as_os_str().as_encoded_bytes()).expect("filesystem path contains no NUL");
-    if unsafe { libc::chown(path.as_ptr(), identity.uid, identity.gid) } != 0 {
+    if unsafe { libc::chown(path.as_ptr(), uid, gid) } != 0 {
         return Err(std::io::Error::last_os_error())
-            .with_context(|| format!("cannot assign {} to prompt user", path.to_string_lossy()));
+            .with_context(|| format!("cannot assign ownership of {}", path.to_string_lossy()));
     }
     Ok(())
 }
 
-pub fn user_dir(root: &Path, user: &str) -> Result<PathBuf> {
-    let identity = user_identity(user)?;
-    secure_state_root(root, identity)?;
+fn secure_dir(path: &Path, uid: u32, gid: u32, mode: u32) -> Result<()> {
+    let metadata =
+        fs::symlink_metadata(path).with_context(|| format!("cannot inspect {}", path.display()))?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != uid
+        || metadata.gid() != gid
+        || !mode_is(&metadata, mode)
+    {
+        bail!("insecure prompt directory {}", path.display());
+    }
+    Ok(())
+}
+
+fn provision_dir(path: &Path, uid: u32, gid: u32, mode: u32) -> Result<()> {
+    match fs::create_dir(path) {
+        Ok(()) => {
+            chown(path, uid, gid)?;
+            fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("cannot create {}", path.display()));
+        }
+    }
+    secure_dir(path, uid, gid, mode)
+}
+
+fn direct_state(root: &Path, user: &str, identity: UserIdentity) -> Result<UserState> {
     let dir = root.join(user);
     match fs::symlink_metadata(&dir) {
         Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                bail!("prompt directory {} is not a real directory", dir.display());
-            }
-            if metadata.uid() != identity.uid || metadata.permissions().mode() & 0o077 != 0 {
+            if metadata.file_type().is_symlink()
+                || !metadata.is_dir()
+                || metadata.uid() != identity.uid
+                || !mode_is(&metadata, 0o700)
+            {
                 bail!(
                     "prompt directory {} must be private to {user}",
                     dir.display()
                 );
             }
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && euid() == identity.uid => {
             fs::create_dir(&dir)
                 .with_context(|| format!("cannot create prompt directory {}", dir.display()))?;
-            if euid() == 0 {
-                chown(&dir, identity)?;
-            } else if euid() != identity.uid {
-                bail!("backend must run as root or as the submitting user");
-            }
             fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
         }
         Err(error) => {
             return Err(error).with_context(|| format!("cannot inspect {}", dir.display()));
         }
     }
-    Ok(dir)
+    Ok(UserState {
+        requests: dir.clone(),
+        responses: dir,
+        request_uid: identity.uid,
+        request_gid: None,
+        request_mode: 0o600,
+        response_uid: identity.uid,
+        response_gid: None,
+        response_mode: 0o600,
+    })
 }
 
-pub fn request_path(dir: &Path, id: &str) -> PathBuf {
-    dir.join(format!("req-{id}.json"))
+fn bridge_state(root: &Path, user: &str, identity: UserIdentity) -> Result<UserState> {
+    let bridge_gid = bridge_gid(user)?;
+    let (cups_uid, _) = account_identity("lp")?;
+    let user_dir = root.join(user);
+    if euid() == 0 {
+        provision_dir(&user_dir, 0, 0, 0o711)?;
+        provision_dir(&user_dir.join("requests"), cups_uid, bridge_gid, 0o2750)?;
+        provision_dir(
+            &user_dir.join("responses"),
+            identity.uid,
+            bridge_gid,
+            0o2770,
+        )?;
+    } else {
+        secure_dir(&user_dir, 0, 0, 0o711)?;
+        secure_dir(&user_dir.join("requests"), cups_uid, bridge_gid, 0o2750)?;
+        secure_dir(
+            &user_dir.join("responses"),
+            identity.uid,
+            bridge_gid,
+            0o2770,
+        )?;
+    }
+    Ok(UserState {
+        requests: user_dir.join("requests"),
+        responses: user_dir.join("responses"),
+        request_uid: cups_uid,
+        request_gid: Some(bridge_gid),
+        request_mode: 0o640,
+        response_uid: identity.uid,
+        response_gid: Some(bridge_gid),
+        response_mode: 0o640,
+    })
 }
 
-pub fn response_path(dir: &Path, id: &str) -> PathBuf {
-    dir.join(format!("resp-{id}.json"))
+pub fn user_state(root: &Path, user: &str) -> Result<UserState> {
+    let identity = user_identity(user)?;
+    secure_state_root(root, identity)?;
+    let dir = root.join(user);
+    match fs::symlink_metadata(&dir) {
+        Ok(metadata) if metadata.uid() == 0 => bridge_state(root, user, identity),
+        Ok(metadata) if metadata.uid() == identity.uid => direct_state(root, user, identity),
+        Ok(_) => bail!("prompt directory {} has an unexpected owner", dir.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && euid() == 0 => {
+            bridge_state(root, user, identity)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && euid() == identity.uid => {
+            direct_state(root, user, identity)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
+            "prompt state for {user:?} is not provisioned; root must create the bridge layout"
+        ),
+        Err(error) => Err(error).with_context(|| format!("cannot inspect {}", dir.display())),
+    }
+}
+
+pub fn request_path(state: &UserState, id: &str) -> PathBuf {
+    state.requests.join(format!("req-{id}.json"))
+}
+
+pub fn response_path(state: &UserState, id: &str) -> PathBuf {
+    state.responses.join(format!("resp-{id}.json"))
 }
 
 pub fn random_token() -> Result<String> {
@@ -157,31 +286,59 @@ pub fn make_request_id(job_id: &str) -> Result<String> {
     Ok(format!("{job_id}-{}", &random_token()?[..16]))
 }
 
-/// Send a private request and return the recipient's directory and identity.
-pub fn send_request(root: &Path, req: &PromptRequest) -> Result<(PathBuf, UserIdentity)> {
+fn secure_file(path: &Path, uid: u32, gid: Option<u32>, mode: u32) -> Result<()> {
+    let metadata =
+        fs::symlink_metadata(path).with_context(|| format!("cannot inspect {}", path.display()))?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.uid() != uid
+        || gid.is_some_and(|gid| metadata.gid() != gid)
+        || !mode_is(&metadata, mode)
+    {
+        bail!("rejected insecure prompt file {}", path.display());
+    }
+    Ok(())
+}
+
+/// Send a private request and return the recipient's state and identity.
+pub fn send_request(root: &Path, req: &PromptRequest) -> Result<(UserState, UserIdentity)> {
     let identity = user_identity(&req.user)?;
-    let dir = user_dir(root, &req.user)?;
-    let path = request_path(&dir, &req.id);
+    let state = user_state(root, &req.user)?;
+    if euid() != 0 && euid() != state.request_uid {
+        bail!(
+            "backend user cannot write prompt requests for {:?}",
+            req.user
+        );
+    }
+    let path = request_path(&state, &req.id);
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .mode(state.request_mode)
         .open(&path)
         .with_context(|| format!("cannot create request {}", path.display()))?;
     file.write_all(&serde_json::to_vec_pretty(req)?)?;
     file.sync_all()?;
     drop(file);
     if euid() == 0 {
-        chown(&path, identity)?;
-    } else if euid() != identity.uid {
-        bail!("backend must run as root or as the submitting user");
+        chown(
+            &path,
+            state.request_uid,
+            state.request_gid.unwrap_or(identity.gid),
+        )?;
     }
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-    Ok((dir, identity))
+    fs::set_permissions(&path, fs::Permissions::from_mode(state.request_mode))?;
+    secure_file(
+        &path,
+        state.request_uid,
+        state.request_gid,
+        state.request_mode,
+    )?;
+    Ok((state, identity))
 }
 
 pub fn wait_response(
-    dir: &Path,
+    state: &UserState,
     id: &str,
     capability: &str,
     identity: UserIdentity,
@@ -189,22 +346,17 @@ pub fn wait_response(
     poll: Duration,
 ) -> Result<WaitOutcome> {
     let start = Instant::now();
-    let path = response_path(dir, id);
+    let path = response_path(state, id);
     loop {
         match fs::symlink_metadata(&path) {
-            Ok(metadata) => {
-                if !metadata.file_type().is_file()
-                    || metadata.uid() != identity.uid
-                    || metadata.permissions().mode() & 0o777 != 0o600
-                {
-                    bail!("rejected insecure prompt response {}", path.display());
-                }
+            Ok(_) => {
+                secure_file(&path, identity.uid, state.response_gid, state.response_mode)?;
                 let response: PromptResponse = serde_json::from_slice(&fs::read(&path)?)
                     .context("cannot parse prompt response")?;
                 if response.id != id || response.capability != capability {
                     bail!("rejected prompt response with an invalid capability");
                 }
-                cleanup(dir, id);
+                cleanup(state, id);
                 return Ok(if response.confirmed {
                     WaitOutcome::Confirmed
                 } else {
@@ -219,20 +371,20 @@ pub fn wait_response(
         if let Some(timeout) = timeout
             && start.elapsed() >= timeout
         {
-            cleanup(dir, id);
+            cleanup(state, id);
             return Ok(WaitOutcome::Timeout);
         }
         sleep(poll);
     }
 }
 
-pub fn cleanup(dir: &Path, id: &str) {
-    fs::remove_file(request_path(dir, id)).ok();
-    fs::remove_file(response_path(dir, id)).ok();
+pub fn cleanup(state: &UserState, id: &str) {
+    fs::remove_file(request_path(state, id)).ok();
+    fs::remove_file(response_path(state, id)).ok();
 }
 
-pub fn pending_requests(dir: &Path) -> Vec<(PathBuf, PromptRequest)> {
-    let mut items: Vec<(PathBuf, PromptRequest)> = fs::read_dir(dir)
+pub fn pending_requests(state: &UserState) -> Vec<(PathBuf, PromptRequest)> {
+    let mut items: Vec<(PathBuf, PromptRequest)> = fs::read_dir(state.requests_dir())
         .into_iter()
         .flatten()
         .filter_map(|entry| entry.ok())
@@ -241,6 +393,15 @@ pub fn pending_requests(dir: &Path) -> Vec<(PathBuf, PromptRequest)> {
             path.file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.starts_with("req-") && name.ends_with(".json"))
+        })
+        .filter(|path| {
+            secure_file(
+                path,
+                state.request_uid,
+                state.request_gid,
+                state.request_mode,
+            )
+            .is_ok()
         })
         .filter_map(|path| {
             let request = serde_json::from_slice::<PromptRequest>(&fs::read(&path).ok()?).ok()?;
@@ -251,19 +412,27 @@ pub fn pending_requests(dir: &Path) -> Vec<(PathBuf, PromptRequest)> {
     items
 }
 
-pub fn send_response(dir: &Path, response: &PromptResponse) -> Result<()> {
-    let path = response_path(dir, &response.id);
+pub fn send_response(state: &UserState, response: &PromptResponse) -> Result<()> {
+    if euid() != state.response_uid {
+        bail!("only the submitting user may write a prompt response");
+    }
+    let path = response_path(state, &response.id);
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .mode(state.response_mode)
         .open(&path)
         .with_context(|| format!("cannot create response {}", path.display()))?;
     file.write_all(&serde_json::to_vec_pretty(response)?)?;
     file.sync_all()?;
     drop(file);
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-    fs::remove_file(request_path(dir, &response.id)).ok();
+    fs::set_permissions(&path, fs::Permissions::from_mode(state.response_mode))?;
+    secure_file(
+        &path,
+        state.response_uid,
+        state.response_gid,
+        state.response_mode,
+    )?;
     Ok(())
 }
 
@@ -289,22 +458,26 @@ mod tests {
             title: "test document".into(),
             detail: "10 pages".into(),
         };
-        let (dir, identity) = send_request(&root, &request).unwrap();
+        let (state, identity) = send_request(&root, &request).unwrap();
         assert_eq!(
-            fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            fs::metadata(state.requests_dir())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
             0o700
         );
         assert_eq!(
-            fs::metadata(request_path(&dir, &request.id))
+            fs::metadata(request_path(&state, &request.id))
                 .unwrap()
                 .permissions()
                 .mode()
                 & 0o777,
             0o600
         );
-        assert_eq!(pending_requests(&dir).len(), 1);
+        assert_eq!(pending_requests(&state).len(), 1);
         send_response(
-            &dir,
+            &state,
             &PromptResponse {
                 id: request.id.clone(),
                 capability: request.capability.clone(),
@@ -314,7 +487,7 @@ mod tests {
         )
         .unwrap();
         let outcome = wait_response(
-            &dir,
+            &state,
             &request.id,
             &request.capability,
             identity,
@@ -339,9 +512,9 @@ mod tests {
             title: "test document".into(),
             detail: String::new(),
         };
-        let (dir, identity) = send_request(&root, &request).unwrap();
+        let (state, identity) = send_request(&root, &request).unwrap();
         send_response(
-            &dir,
+            &state,
             &PromptResponse {
                 id: request.id.clone(),
                 capability: "wrong".into(),
@@ -352,7 +525,7 @@ mod tests {
         .unwrap();
         assert!(
             wait_response(
-                &dir,
+                &state,
                 &request.id,
                 &request.capability,
                 identity,

@@ -345,8 +345,9 @@ virtual_info = "{vinfo}"
 
 [paths]
 # Root directory for backend <-> prompt daemon communication.  It must be
-# root-owned and not writable by untrusted users; DupriMan creates private
-# per-user subdirectories below it.
+# root-owned and not writable by untrusted users.  Production integration
+# provisions a root-owned per-user directory with requests/ and responses/
+# children using the dedicated dupriman-<user> bridge group.
 state_dir = "{state}"
 # Temporary directory for split PDFs
 spool_dir = "{spool}"
