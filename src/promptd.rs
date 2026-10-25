@@ -1,4 +1,4 @@
-//! 弹窗守护进程：在用户桌面会话中运行（systemd --user 服务）。
+//! 弹窗守护进程：在用户桌面会话中运行（由所选会话管理器监管）。
 //!
 //! 轮询状态目录，发现后端发来的确认请求后弹出 GTK4 对话框，
 //! 将用户选择写回响应文件。只处理与当前用户同名的请求，
@@ -18,23 +18,30 @@ pub fn run(cfg: &Config) -> Result<()> {
         "GTK initialization failed: please run inside a graphical session (WAYLAND_DISPLAY/DISPLAY available)",
     )?;
 
-    let state_dir = cfg.paths.state_dir.clone();
-    let prompt = cfg.prompt.clone();
-    let busy = Rc::new(Cell::new(false));
     let current_user = std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
         .unwrap_or_default();
+    if !cfg
+        .prompt
+        .allowed_users
+        .iter()
+        .any(|user| user == &current_user)
+    {
+        anyhow::bail!("current user is not listed in prompt.allowed_users");
+    }
+    let state_dir = prompt_proto::user_dir(&cfg.paths.state_dir, &current_user)?;
+    let state_dir_display = state_dir.display().to_string();
+    let prompt = cfg.prompt.clone();
+    let busy = Rc::new(Cell::new(false));
 
     glib::timeout_add_seconds_local(1, {
         let busy = Rc::clone(&busy);
-        let current_user = current_user.clone();
         move || {
             if busy.get() {
                 return glib::ControlFlow::Continue;
             }
             let pending = prompt_proto::pending_requests(&state_dir);
-            let Some((_, req)) = pending.iter().find(|(_, r)| r.user == current_user).cloned()
-            else {
+            let Some((_, req)) = pending.first().cloned() else {
                 return glib::ControlFlow::Continue;
             };
             eprintln!(
@@ -57,10 +64,8 @@ pub fn run(cfg: &Config) -> Result<()> {
 
     eprintln!(
         "[dupriman-prompt] {}",
-        cfg.prompt.cli_fmt(
-            "cli_daemon_started",
-            &[("dir", &cfg.paths.state_dir.display().to_string())]
-        )
+        cfg.prompt
+            .cli_fmt("cli_daemon_started", &[("dir", &state_dir_display)])
     );
     glib::MainLoop::new(None, false).run();
     Ok(())
@@ -89,7 +94,9 @@ fn ensure_display_env() {
     sockets.sort();
     if let Some(name) = sockets.first() {
         // 此处无法访问 cfg，直接用英文（属诊断信息，不影响用户界面）
-        eprintln!("[dupriman-prompt] No display env var found, auto-detecting WAYLAND_DISPLAY={name}");
+        eprintln!(
+            "[dupriman-prompt] No display env var found, auto-detecting WAYLAND_DISPLAY={name}"
+        );
         // SAFETY: setting process env var during single-threaded startup
         unsafe { std::env::set_var("WAYLAND_DISPLAY", name) };
     }
@@ -126,6 +133,7 @@ async fn show_dialog(
 
     let resp = PromptResponse {
         id: req.id.clone(),
+        capability: req.capability.clone(),
         confirmed,
         reason,
     };

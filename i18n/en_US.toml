@@ -99,7 +99,7 @@ print_cancel_err = "cancel failed: {msg}"
 # ---- backend ----
 backend_stdin_read_failed = "Cannot read stdin"
 backend_user_cancelled = "User cancelled back-side printing ({reason}). Fronts already printed; please handle the paper manually."
-backend_timeout = "Confirmation timed out, back-side printing cancelled. Please check that the dupriman prompt daemon is running (systemctl --user status dupriman-prompt)."
+backend_timeout = "Confirmation timed out, back-side printing cancelled. Please check that the dupriman prompt daemon is supervised in the graphical session."
 backend_print_timeout = "Print job timed out ({job}), cancellation attempted"
 
 # ---- duplex mode display (for log messages) ----

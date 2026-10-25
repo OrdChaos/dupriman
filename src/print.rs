@@ -1,6 +1,6 @@
 //! 打印调度：向真实打印机队列提交作业并轮询等待完成。调用系统工具 lp / lpstat / cancel。
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 use std::process::Command;
 use std::thread::sleep;
@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use crate::i18n::{self, Lang};
 
 fn t(key: &str) -> String {
-    i18n::texts(Lang::from_env()).get(key).unwrap_or(key).to_string()
+    i18n::texts(Lang::from_env())
+        .get(key)
+        .unwrap_or(key)
+        .to_string()
 }
 
 fn t_fmt(key: &str, args: &[(&str, &str)]) -> String {
@@ -40,7 +43,10 @@ pub fn submit(
 
     let out = cmd.output().context(t("print_lp_failed"))?;
     if !out.status.success() {
-        bail!(t_fmt("print_lp_submit_failed", &[("msg", String::from_utf8_lossy(&out.stderr).trim())]));
+        bail!(t_fmt(
+            "print_lp_submit_failed",
+            &[("msg", String::from_utf8_lossy(&out.stderr).trim())]
+        ));
     }
     // 标准输出形如：request id is HP_LaserJet_1020-42 (1 file(s))
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -84,9 +90,10 @@ pub fn cancel(job_id: &str) -> Result<()> {
         .output()
         .context(t("print_cancel_failed"))?;
     if !out.status.success() {
-        bail!(
-            t_fmt("print_cancel_err", &[("msg", String::from_utf8_lossy(&out.stderr).trim())])
-        );
+        bail!(t_fmt(
+            "print_cancel_err",
+            &[("msg", String::from_utf8_lossy(&out.stderr).trim())]
+        ));
     }
     Ok(())
 }
@@ -96,9 +103,6 @@ mod tests {
     #[test]
     fn parse_lp_stdout() {
         let line = "request id is HP_LaserJet_1020-42 (1 file(s))";
-        assert_eq!(
-            line.split_whitespace().nth(3),
-            Some("HP_LaserJet_1020-42")
-        );
+        assert_eq!(line.split_whitespace().nth(3), Some("HP_LaserJet_1020-42"));
     }
 }

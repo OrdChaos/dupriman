@@ -3,7 +3,7 @@
 [English](README.md) | [简体中文](README.zh_CN.md) | **繁體中文**
 
 為**單面印表機**（如 HP LaserJet 1020，foo2zjs 驅動）提供近乎自動的雙面列印體驗：
-在任意應用的列印對話框中，選擇虛擬印表機 **DupriMan-Duplex**，並選擇
+在任意應用的列印對話框中，選擇虛擬印表機 **dupriman-duplex**，並選擇
 **關閉 / 長邊翻轉 / 短邊翻轉** 雙面模式。它將：
 
 1. 列印**所有正面**（奇數頁，全部份數）；
@@ -14,23 +14,23 @@
 
 ```mermaid
 flowchart LR
-    A[應用程式<br/>列印到 DupriMan-Duplex] -->|PDF + 雙面選項| B[CUPS 佇列<br/>dupriman://]
+    A[應用程式<br/>列印到 dupriman-duplex] -->|PDF + 雙面選項| B[CUPS 佇列<br/>dupriman://]
     B --> C[dupriman 後端<br/>CUPS 後端行程]
     C -->|qpdf 拆分| D[正面 PDF<br/>奇數頁]
     C -->|qpdf 拆分 + 倒序/旋轉| E[背面 PDF<br/>偶數頁]
     D --> F[真實印表機佇列]
-    C -->|寫入請求到 /run/dupriman| G[dupriman prompt<br/>GTK 彈窗守護行程<br/>systemd --user]
+    C -->|寫入私有請求目錄| G[dupriman prompt<br/>GTK 彈窗守護行程<br/>工作階段管理器]
     G -->|使用者點擊確定| C
     E --> F
 ```
 
 - **後端**（`dupriman backend`，由 cupsd 呼叫）：解析雙面選項，用 qpdf 拆分奇偶頁，提交到真實印表機佇列，並在繼續之前**等待實體列印完成**。
-- **彈窗守護行程**（`dupriman prompt`，執行於使用者圖形工作階段）：CUPS 後端以 `cups` 使用者身分執行，無法顯示對話框，因此透過 `/run/dupriman` 中的請求/回應檔案進行通訊。守護行程顯示 GTK4 對話框。取消或逾時會安全中止背面列印工作。
+- **彈窗守護行程**（`dupriman prompt`，執行於使用者圖形工作階段）：後端會在 `/run/dupriman` 下為提交使用者建立私有目錄。請求與回應均校驗檔案所有者和隨機 capability，本機其他使用者無法讀取工作中繼資料或偽造確認。取消或逾時會安全中止背面列印工作。
 - **多份拷貝**：PPD 宣告了 `cupsManualCopies`，因此份數會透傳到真實佇列——先列印全部正面（×N），彈窗一次，再列印全部背面（×N）。
 
 ## 依賴
 
-執行時：`cups`、`qpdf`、`poppler`（pdfinfo）、`gtk4`（≥ 4.10）、`systemd`
+執行時：`cups`、`qpdf`、`poppler`（pdfinfo）、`gtk4`（>= 4.10）
 建構：`rust` / `cargo`、`pkg-config`
 
 Arch Linux：
@@ -39,7 +39,7 @@ Arch Linux：
 sudo pacman -S --needed cups qpdf poppler gtk4 rust
 ```
 
-## 安裝
+## 手動整合
 
 ### Arch Linux:
 
@@ -51,34 +51,29 @@ paru -S dupriman-git
 
 ```bash
 cargo build --release
-sudo ./target/release/dupriman install
 ```
 
-`install` 按 FHS 規範放置檔案並啟用：
-
-| 路徑 | 說明 |
-|---|---|
-| `/usr/bin/dupriman` | 主程式 |
-| `/usr/lib/cups/backend/dupriman` | CUPS 後端（符號連結） |
-| `/usr/share/cups/model/dupriman.ppd` | 虛擬印表機 PPD |
-| `/etc/dupriman/config.toml` | 系統級設定（已存在時不覆蓋） |
-| `/usr/lib/systemd/user/dupriman-prompt.service` | 彈窗守護行程（全域啟用） |
-| `/usr/lib/tmpfiles.d/dupriman.conf` | 狀態/暫存目錄 |
-| `/usr/share/dupriman/i18n/` | 介面翻譯檔案 |
-
-然後啟動彈窗服務（或重新登入）：
+DupriMan 不會自行安裝檔案、建立 CUPS 佇列、管理執行期目錄或啟用服務。
+安裝二進位、CUPS backend 符號連結及 `dupriman ppd` 生成的 PPD 後，明確執行：
 
 ```bash
-systemctl --user start dupriman-prompt
-dupriman test   # 環境自檢
+sudo install -d -o root -g root -m 0711 /run/dupriman
+sudo install -d -o root -g root -m 0700 /var/tmp/dupriman
+sudo install -d -m 0755 /etc/dupriman
+sudo sh -c 'dupriman sample-config > /etc/dupriman/config.toml'
+sudo lpadmin -p dupriman-duplex -v dupriman://duplex \
+  -P /usr/share/cups/model/dupriman.ppd -E
 ```
+
+設定 `printer.real` 與明確的 `prompt.allowed_users`。CUPS backend 必須以
+root 或提交工作的使用者執行，否則會在列印背面前拒絕工作。最後以所選 init、
+桌面 autostart 或工作階段管理器監管每個允許圖形工作階段中的 `dupriman prompt`。
 
 ## 設定
 
 **你應當先使用CUPS添加你的真實印表機。**
 
-系統級：`/etc/dupriman/config.toml`；使用者級覆蓋：`~/.config/dupriman/config.toml`
-（只需寫入要覆蓋的欄位）。完整註解範例：`dupriman sample-config`。
+backend 只讀取 `/etc/dupriman/config.toml` 和明確的 `--config` 參數。使用者級配置只適合覆蓋彈窗文案；不要覆蓋印表機或路徑設定。完整註解範例：`dupriman sample-config`。
 
 關鍵選項（預設值適用於大多數出紙面朝下的雷射印表機）：
 
@@ -100,6 +95,7 @@ even_rotate = 0                  # 短邊翻轉：背面旋轉角度
 [prompt]
 language = "auto"                # 對話框語言：auto | en | zh_CN | zh_TW
 timeout_secs = 600               # 0 = 永久等待；逾時後中止
+allowed_users = ["alice"]         # 允許確認雙面工作的本地帳戶
 ```
 
 ### 國際化（i18n）
@@ -140,7 +136,7 @@ cancel_label = "停止"
 
 ## 使用方法
 
-在列印對話框中選擇 **DupriMan-Duplex**，然後選擇雙面模式：
+在列印對話框中選擇 **dupriman-duplex**，然後選擇雙面模式：
 
 - **關閉**：直接轉發到真實印表機；
 - **長邊翻轉**（預設）：適用於縱向文件，沿長邊翻轉（背面旋轉 180°）；
@@ -151,25 +147,15 @@ cancel_label = "停止"
 ## 日誌與故障排除
 
 - 後端日誌：`journalctl -u cups` 或 `/var/log/cups/error_log`（前綴 `[dupriman]`）
-- 彈窗守護行程：`journalctl --user -u dupriman-prompt`
+- 彈窗守護行程：查看所選工作階段管理器的日誌
 - 自檢：`dupriman test`
 - 如果請求雙面列印時彈窗守護行程未執行：正面會正常列印，之後後端等待並在 `prompt.timeout_secs` 後安全中止。
 - 偵錯拆分結果：設定 `print.keep_temp = true`；暫存 PDF 將保留在 `paths.spool_dir` 中。
 
-## 解除安裝
+## 移除
 
-### Arch Linux:
-
-```bash
-paru -Rns dupriman-git
-```
-
-### 其他
-
-```bash
-sudo dupriman uninstall            # 移除印表機/服務/系統檔案，保留設定
-sudo dupriman uninstall --purge    # 同時移除設定和二進位檔案
-```
+使用包管理器刪除軟體包，用其所屬工作階段管理器停止 prompt 服務；如不再使用
+佇列，執行 `lpadmin -x dupriman-duplex`。配置與執行期目錄由管理員明確管理。
 
 ## 開發
 
@@ -187,10 +173,9 @@ cupstestppd <(./target/debug/dupriman ppd)   # 驗證 PPD
    - `Lang::ALL`：加入新變體
    - `Lang::from_env()`：新增從 `LANG`/`LC_ALL` 偵測語言的邏輯
    - `Lang::file_stem()`：對應到語言檔名
-   - `Lang::raw_toml()`：新增 `include_str!("../i18n/<stem>.toml")` 分支
 3. 更新[國際化](#國際化i18n)中的語言表（可選）。
 
-缺失的鍵會自動回退到 `en_US`。`install` 透過 `Lang::ALL` 自動發現所有語言，無需修改安裝腳本。
+缺失的鍵會自動回退到 `en_US`。`dupriman ppd` 透過 `Lang::ALL` 自動發現所有語言，無需修改打包腳本。
 
 ### 已測試硬體
 

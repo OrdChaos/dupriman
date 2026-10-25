@@ -47,7 +47,7 @@ impl Default for PrinterCfg {
             // 默认输出到 PDF（测试模式），避免误消耗纸张；
             // 真机打印时改为实际队列名（如 HP_LaserJet_1020）
             real: "save-pdf".into(),
-            virtual_name: "DupriMan-Duplex".into(),
+            virtual_name: "dupriman-duplex".into(),
             virtual_uri: "dupriman://duplex".into(),
             virtual_info: "DupriMan Manual Duplex".into(),
         }
@@ -57,7 +57,7 @@ impl Default for PrinterCfg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PathsCfg {
-    /// 后端与弹窗守护进程通信的状态目录（需双方可写，建议 1777）
+    /// 后端与弹窗守护进程通信的根目录（root-owned, non-writable）
     pub state_dir: PathBuf,
     /// 拆分出的临时 PDF 存放目录
     pub spool_dir: PathBuf,
@@ -149,6 +149,8 @@ pub struct PromptCfg {
     pub ok_label: String,
     /// 取消按钮文字（留空则按 language 自动选择）
     pub cancel_label: String,
+    /// 可接收确认请求的本地账户。留空时拒绝双面作业。
+    pub allowed_users: Vec<String>,
 }
 
 impl PromptCfg {
@@ -204,7 +206,14 @@ impl PromptCfg {
     }
 
     /// 任务详情文案（配置优先，否则按语言；含占位符替换）
-    pub fn resolved_detail(&self, job_id: &str, title: &str, total: u32, evens: usize, has_blank: bool) -> String {
+    pub fn resolved_detail(
+        &self,
+        job_id: &str,
+        title: &str,
+        total: u32,
+        evens: usize,
+        has_blank: bool,
+    ) -> String {
         let template = if has_blank {
             &self.texts().detail_with_blank
         } else {
@@ -242,6 +251,7 @@ impl Default for PromptCfg {
             message: String::new(),
             ok_label: String::new(),
             cancel_label: String::new(),
+            allowed_users: vec![],
         }
     }
 }
@@ -273,8 +283,23 @@ impl Default for PrintCfg {
 impl Config {
     /// 按优先级加载并合并配置
     pub fn load(extra: Option<&Path>) -> Result<Self> {
+        Self::load_paths(Self::candidate_paths(extra))
+    }
+
+    /// Load configuration used by the CUPS backend.  A backend must never
+    /// consume an arbitrary user's configuration while making privileged
+    /// printing decisions.
+    pub fn load_for_backend(extra: Option<&Path>) -> Result<Self> {
+        let mut paths = vec![PathBuf::from(SYSTEM_CONFIG)];
+        if let Some(path) = extra {
+            paths.push(path.to_path_buf());
+        }
+        Self::load_paths(paths)
+    }
+
+    fn load_paths(paths: Vec<PathBuf>) -> Result<Self> {
         let mut base = toml::Value::Table(toml::map::Map::new());
-        for path in Self::candidate_paths(extra) {
+        for path in paths {
             if !path.exists() {
                 continue;
             }
@@ -319,7 +344,9 @@ virtual_uri = "{vuri}"
 virtual_info = "{vinfo}"
 
 [paths]
-# State directory for backend <-> prompt daemon communication (created as 1777 by install)
+# Root directory for backend <-> prompt daemon communication.  It must be
+# root-owned and not writable by untrusted users; DupriMan creates private
+# per-user subdirectories below it.
 state_dir = "{state}"
 # Temporary directory for split PDFs
 spool_dir = "{spool}"
@@ -348,6 +375,9 @@ title = "{ptitle}"
 message = "{pmsg}"
 ok_label = "{pok}"
 cancel_label = "{pcancel}"
+# Local accounts allowed to receive duplex confirmation prompts.  Keep this
+# explicit; an empty list rejects duplex jobs.
+allowed_users = {allowed_users:?}
 
 [print]
 poll_interval_ms = {poll}
@@ -375,6 +405,7 @@ keep_temp = {keep}
             pmsg = cfg.prompt.message,
             pok = cfg.prompt.ok_label,
             pcancel = cfg.prompt.cancel_label,
+            allowed_users = cfg.prompt.allowed_users,
             poll = cfg.print.poll_interval_ms,
             jtimeout = cfg.print.job_timeout_secs,
             fwd = cfg.print.forward_options,
@@ -425,6 +456,7 @@ mod tests {
         // 默认语言 auto，文案留空由 i18n 按语言填充
         assert_eq!(cfg.prompt.language, "auto");
         assert!(cfg.prompt.message.is_empty());
+        assert!(cfg.prompt.allowed_users.is_empty());
         // 出纸面朝下 + 原样放回纸叠：纸叠顶→底 = 先打→后打，进纸从顶开始，
         // 故背面倒序（Reverse）；长边翻转背面转 180°，短边翻转不转。
         let (order, rotate) = cfg.duplex.for_mode(DuplexMode::LongEdge);
@@ -465,16 +497,20 @@ mod tests {
         let mut base = toml::Value::Table(toml::map::Map::new());
         merge_value(
             &mut base,
-            toml::from_str(r#"[prompt]
+            toml::from_str(
+                r#"[prompt]
 message = "系统文案"
-"#)
+"#,
+            )
             .unwrap(),
         );
         merge_value(
             &mut base,
-            toml::from_str(r#"[prompt]
+            toml::from_str(
+                r#"[prompt]
 ok_label = "好"
-"#)
+"#,
+            )
             .unwrap(),
         );
         let cfg: Config = base.try_into().unwrap();

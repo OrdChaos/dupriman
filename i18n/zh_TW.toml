@@ -98,7 +98,7 @@ print_cancel_err = "cancel 失敗: {msg}"
 # ---- 後端 ----
 backend_stdin_read_failed = "讀取 stdin 失敗"
 backend_user_cancelled = "使用者取消了背面列印（{reason}）。正面已列印完成，請手動處理紙張。"
-backend_timeout = "確認逾時，背面列印已取消。請檢查彈窗守護行程是否在執行（systemctl --user status dupriman-prompt）。"
+backend_timeout = "確認逾時，背面列印已取消。請檢查圖形工作階段中的彈窗守護行程是否正在被監管。"
 backend_print_timeout = "列印作業逾時（{job}），已嘗試取消"
 
 # ---- 雙面模式顯示 ----

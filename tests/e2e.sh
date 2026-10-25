@@ -10,6 +10,7 @@ WORK="$(mktemp -d /tmp/dupriman-e2e.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/mockbin" "$WORK/state" "$WORK/spool"
+TEST_USER="${USER:?USER must be set}"
 
 # ---- mock lp：记录调用，返回假作业号 ----
 cat > "$WORK/mockbin/lp" <<'EOF'
@@ -65,29 +66,46 @@ spool_dir = "$WORK/spool"
 enabled = true
 timeout_secs = 30
 language = "zh_CN"
+allowed_users = ["$TEST_USER"]
 [print]
 poll_interval_ms = 50
 EOF
 
 # ---- 模拟弹窗守护：看到请求立即"点击确定" ----
+confirm_requests() {
 (
   for _ in $(seq 1 100); do
-    for f in "$WORK/state"/req-*.json; do
+    for f in "$WORK/state/$TEST_USER"/req-*.json; do
       [ -e "$f" ] || continue
-      id=$(basename "$f" .json); id=${id#req-}
-      printf '{"id":"%s","confirmed":true,"reason":""}' "$id" > "$WORK/state/resp-$id.json"
-      rm -f "$f"
+      python3 - "$f" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+request = pathlib.Path(sys.argv[1])
+data = json.loads(request.read_text())
+response = request.with_name(f"resp-{data['id']}.json")
+fd = os.open(response, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w") as output:
+    json.dump({"id": data["id"], "capability": data["capability"],
+               "confirmed": True, "reason": ""}, output)
+request.unlink()
+PY
     done
     sleep 0.1
   done
 ) &
+}
+
+confirm_requests
 WATCHER=$!
 
 export MOCK_LOG="$WORK/calls.log"
 export PATH="$WORK/mockbin:$PATH"
 
 echo "=== 场景 1：长边翻转 2 份拷贝 ==="
-"$BIN" --config "$WORK/config.toml" backend 100 alice 报告 2 "Duplex=DuplexNoTumble" "$WORK/doc.pdf" 2>"$WORK/backend.log"
+"$BIN" --config "$WORK/config.toml" backend 100 "$TEST_USER" 报告 2 "Duplex=DuplexNoTumble" "$WORK/doc.pdf" 2>"$WORK/backend.log"
 rc=$?
 kill $WATCHER 2>/dev/null; wait $WATCHER 2>/dev/null
 
@@ -110,7 +128,7 @@ back_pdf=$(ls "$WORK/spool/saved"/job-100--back--2.pdf 2>/dev/null)
 
 echo "=== 场景 2：单面直通 ==="
 : > "$WORK/backend.log"
-"$BIN" --config "$WORK/config.toml" backend 101 alice 单页文档 1 "Duplex=None" "$WORK/doc.pdf" 2>"$WORK/backend.log"
+"$BIN" --config "$WORK/config.toml" backend 101 "$TEST_USER" 单页文档 1 "Duplex=None" "$WORK/doc.pdf" 2>"$WORK/backend.log"
 rc=$?
 simplex_pdf=$(ls "$WORK/spool/saved"/job-101-*.pdf 2>/dev/null)
 [ $rc -eq 0 ] && [ -n "$simplex_pdf" ] || { echo "FAIL: 单面应保存 1 个 PDF"; pass=0; }
@@ -119,19 +137,9 @@ echo "$simplex_pdf" | grep -q 'front\|back' && { echo "FAIL: 单面不应拆分"
 
 echo "=== 场景 3：短边翻转（背面不旋转）==="
 : > "$WORK/backend.log"
-(
-  for _ in $(seq 1 100); do
-    for f in "$WORK/state"/req-*.json; do
-      [ -e "$f" ] || continue
-      id=$(basename "$f" .json); id=${id#req-}
-      printf '{"id":"%s","confirmed":true,"reason":""}' "$id" > "$WORK/state/resp-$id.json"
-      rm -f "$f"
-    done
-    sleep 0.1
-  done
-) &
+confirm_requests
 WATCHER=$!
-"$BIN" --config "$WORK/config.toml" backend 102 alice 竖版 1 "sides=two-sided-short-edge" "$WORK/doc.pdf" 2>"$WORK/backend.log"
+"$BIN" --config "$WORK/config.toml" backend 102 "$TEST_USER" 竖版 1 "sides=two-sided-short-edge" "$WORK/doc.pdf" 2>"$WORK/backend.log"
 rc=$?
 kill $WATCHER 2>/dev/null; wait $WATCHER 2>/dev/null
 [ $rc -eq 0 ] || { echo "FAIL: 短边翻转退出码非 0"; pass=0; }
@@ -148,11 +156,12 @@ spool_dir = "$WORK/spool"
 enabled = true
 timeout_secs = 1
 language = "zh_CN"
+allowed_users = ["$TEST_USER"]
 [print]
 poll_interval_ms = 50
 EOF
 : > "$WORK/backend.log"
-"$BIN" --config "$WORK/config2.toml" backend 103 alice 取消测试 1 "Duplex=DuplexNoTumble" "$WORK/doc.pdf" 2>"$WORK/backend.log"
+"$BIN" --config "$WORK/config2.toml" backend 103 "$TEST_USER" 取消测试 1 "Duplex=DuplexNoTumble" "$WORK/doc.pdf" 2>"$WORK/backend.log"
 rc=$?
 [ $rc -ne 0 ] || { echo "FAIL: 超时应非 0 退出"; pass=0; }
 grep -qi 'timed out\|超时' "$WORK/backend.log" || { echo "FAIL: 应有超时提示"; pass=0; }

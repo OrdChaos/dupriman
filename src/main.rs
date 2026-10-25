@@ -3,13 +3,11 @@
 //! 单一二进制包含全部角色：
 //! - CUPS 后端（被 cupsd 以 `dupriman://` URI 调用，或无参数时输出发现信息）
 //! - `dupriman prompt`：GTK 弹窗守护进程（用户会话内）
-//! - `dupriman install/uninstall`：按 FHS 安装/卸载并注册虚拟打印机
 //! - `dupriman test`：环境自检
 
 mod backend;
 mod config;
 mod i18n;
-mod install;
 mod options;
 mod pdf;
 mod ppd;
@@ -46,38 +44,8 @@ enum Cmd {
         #[arg(required = true, num_args = 5..=6)]
         args: Vec<String>,
     },
-    /// 启动弹窗守护进程（图形会话内，通常由 systemd --user 启动）
+    /// 启动弹窗守护进程（图形会话内，由所选会话管理器监管）
     Prompt,
-    /// 安装并注册虚拟打印机（需要 root；打包用 --root/--no-activate）
-    Install {
-        /// 目标根目录（打包时传 pkgdir）
-        #[arg(long, default_value = "/")]
-        root: PathBuf,
-        /// 只落盘文件，不执行 lpadmin/systemctl
-        #[arg(long)]
-        no_activate: bool,
-        /// 只执行激活动作（文件已由包管理器安装）
-        #[arg(long)]
-        activate_only: bool,
-        /// 覆盖已存在的配置文件
-        #[arg(long)]
-        force: bool,
-        /// 只打印计划，不执行
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// 卸载虚拟打印机与相关文件
-    Uninstall {
-        #[arg(long, default_value = "/")]
-        root: PathBuf,
-        #[arg(long)]
-        no_activate: bool,
-        /// 连同二进制与配置一起删除
-        #[arg(long)]
-        purge: bool,
-        #[arg(long)]
-        dry_run: bool,
-    },
     /// 环境自检：依赖工具、配置、打印机、服务状态
     Test,
     /// 打印生成的 PPD 到标准输出
@@ -94,7 +62,7 @@ fn main() {
         && !raw[1].is_empty()
         && raw[1].chars().all(|c| c.is_ascii_digit())
     {
-        let cfg = load_config(None);
+        let cfg = load_backend_config(None);
         let args = match backend::BackendArgs::from_cups_args(&raw[1..]) {
             Ok(a) => a,
             Err(e) => {
@@ -121,7 +89,7 @@ fn main() {
 
     let code = match cli.command {
         Some(Cmd::Backend { args }) => match backend::BackendArgs::from_cups_args(&args) {
-            Ok(a) => backend::run(&cfg, a),
+            Ok(a) => backend::run(&load_backend_config(cli.config.as_deref()), a),
             Err(e) => {
                 eprintln!("{}: {e:#}", cfg.prompt.cli("cli_args_error"));
                 2
@@ -131,51 +99,6 @@ fn main() {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("{}: {e:#}", cfg.prompt.cli("cli_prompt_failed"));
-                1
-            }
-        },
-        Some(Cmd::Install {
-            root,
-            no_activate,
-            activate_only,
-            force,
-            dry_run,
-        }) => match install::install(
-            &cfg,
-            &install::InstallOpts {
-                root,
-                no_activate,
-                activate_only,
-                force,
-                dry_run,
-            },
-        ) {
-            Ok(()) => 0,
-            Err(e) => {
-                eprintln!("{}: {e:#}", cfg.prompt.cli("cli_install_failed"));
-                1
-            }
-        },
-        Some(Cmd::Uninstall {
-            root,
-            no_activate,
-            purge,
-            dry_run,
-        }) => match install::uninstall(
-            &cfg,
-            &install::InstallOpts {
-                root,
-                no_activate,
-                dry_run,
-                ..Default::default()
-            },
-            purge,
-        )
-        .map(|_| ())
-        {
-            Ok(()) => 0,
-            Err(e) => {
-                eprintln!("{}: {e:#}", cfg.prompt.cli("cli_uninstall_failed"));
                 1
             }
         },
@@ -197,7 +120,20 @@ fn load_config(extra: Option<&std::path::Path>) -> Config {
     match Config::load(extra) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("{}: {e:#}", load_config(None).prompt.cli("cli_config_warning"));
+            eprintln!(
+                "{}: {e:#}",
+                load_config(None).prompt.cli("cli_config_warning")
+            );
+            Config::default()
+        }
+    }
+}
+
+fn load_backend_config(extra: Option<&std::path::Path>) -> Config {
+    match Config::load_for_backend(extra) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("backend configuration warning: {e:#}");
             Config::default()
         }
     }
@@ -223,7 +159,11 @@ fn self_test(cfg: &Config) -> i32 {
         ("lpstat", "cups"),
         ("lpadmin", "cups"),
     ] {
-        check(tool, which(tool), &cfg.prompt.cli_fmt("test_dep_hint", &[("pkg", pkg)]));
+        check(
+            tool,
+            which(tool),
+            &cfg.prompt.cli_fmt("test_dep_hint", &[("pkg", pkg)]),
+        );
     }
 
     println!("{}", cfg.prompt.cli("test_config_header"));
@@ -240,12 +180,16 @@ fn self_test(cfg: &Config) -> i32 {
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
     check(
-        &cfg.prompt.cli_fmt("test_real_printer_fmt", &[("name", &cfg.printer.real)]),
+        &cfg.prompt
+            .cli_fmt("test_real_printer_fmt", &[("name", &cfg.printer.real)]),
         lpstat_out.contains(&cfg.printer.real),
         &cfg.prompt.cli("test_real_printer_hint"),
     );
     check(
-        &cfg.prompt.cli_fmt("test_virtual_printer_fmt", &[("name", &cfg.printer.virtual_name)]),
+        &cfg.prompt.cli_fmt(
+            "test_virtual_printer_fmt",
+            &[("name", &cfg.printer.virtual_name)],
+        ),
         lpstat_out.contains(&cfg.printer.virtual_name),
         &cfg.prompt.cli("test_virtual_printer_hint"),
     );
@@ -255,19 +199,17 @@ fn self_test(cfg: &Config) -> i32 {
         .map(|m| m.is_dir())
         .unwrap_or(false);
     check(
-        &cfg.prompt.cli_fmt("test_state_dir_fmt", &[("path", &cfg.paths.state_dir.display().to_string())]),
+        &cfg.prompt.cli_fmt(
+            "test_state_dir_fmt",
+            &[("path", &cfg.paths.state_dir.display().to_string())],
+        ),
         state_ok,
         &cfg.prompt.cli("test_state_dir_hint"),
     );
-    let svc = std::process::Command::new("systemctl")
-        .args(["--user", "is-active", "dupriman-prompt.service"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
-        .unwrap_or(false);
     check(
-        &cfg.prompt.cli("test_prompt_label"),
-        svc,
-        &cfg.prompt.cli("test_prompt_hint"),
+        "prompt users configured",
+        !cfg.prompt.allowed_users.is_empty(),
+        "set prompt.allowed_users and supervise `dupriman prompt` with your session manager",
     );
 
     if failed == 0 {
@@ -276,7 +218,8 @@ fn self_test(cfg: &Config) -> i32 {
     } else {
         println!(
             "\n{}",
-            cfg.prompt.cli_fmt("cli_checks_failed", &[("failed", &failed.to_string())])
+            cfg.prompt
+                .cli_fmt("cli_checks_failed", &[("failed", &failed.to_string())])
         );
         1
     }

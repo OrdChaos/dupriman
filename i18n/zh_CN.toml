@@ -98,7 +98,7 @@ print_cancel_err = "cancel 失败: {msg}"
 # ---- 后端 ----
 backend_stdin_read_failed = "读取 stdin 失败"
 backend_user_cancelled = "用户取消了背面打印（{reason}）。正面已打印完成，请手动处理纸张。"
-backend_timeout = "确认超时，背面打印已取消。请检查弹窗守护进程是否在运行（systemctl --user status dupriman-prompt）。"
+backend_timeout = "确认超时，背面打印已取消。请检查图形会话中的弹窗守护进程是否正在被监管。"
 backend_print_timeout = "打印作业超时（{job}），已尝试取消"
 
 # ---- 双面模式显示 ----

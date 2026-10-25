@@ -3,7 +3,7 @@
 **English** | [简体中文](README.zh_CN.md) | [繁體中文](README.zh_TW.md)
 
 Gives **single-sided printers** a near-automatic duplex experience:
-In any application's print dialog, select the virtual printer **DupriMan-Duplex** and choose
+In any application's print dialog, select the virtual printer **dupriman-duplex** and choose
 **Off / Long-edge / Short-edge** duplex. It will:
 
 1. Print **all fronts** (odd pages, all copies);
@@ -14,23 +14,23 @@ In any application's print dialog, select the virtual printer **DupriMan-Duplex*
 
 ```mermaid
 flowchart LR
-    A[Application<br/>prints to DupriMan-Duplex] -->|PDF + Duplex option| B[CUPS queue<br/>dupriman://]
+    A[Application<br/>prints to dupriman-duplex] -->|PDF + Duplex option| B[CUPS queue<br/>dupriman://]
     B --> C[dupriman backend<br/>CUPS backend process]
     C -->|qpdf split| D[Front PDF<br/>odd pages]
     C -->|qpdf split + reverse/rotate| E[Back PDF<br/>even pages]
     D --> F[Real printer queue]
-    C -->|write request /run/dupriman| G[dupriman prompt<br/>GTK prompt daemon<br/>systemd --user]
+    C -->|private request directory| G[dupriman prompt<br/>GTK prompt daemon<br/>chosen session supervisor]
     G -->|user clicks OK| C
     E --> F
 ```
 
 - **Backend** (`dupriman backend`, called by cupsd): parses duplex options, splits odd/even pages with qpdf, submits to the real queue and **waits for physical completion** before proceeding.
-- **Prompt daemon** (`dupriman prompt`, runs in the user's graphical session): CUPS backends run as the `cups` user and cannot show dialogs, so they communicate via request/response files in `/run/dupriman`. The daemon shows a GTK4 dialog. Cancel or timeout safely aborts the back-side job.
+- **Prompt daemon** (`dupriman prompt`, runs in the user's graphical session): the backend creates a private directory for the submitting user below `/run/dupriman`. Requests and responses are owner-checked and capability-bound, so another local user cannot read job metadata or approve a job. Cancel or timeout safely aborts the back-side job.
 - **Multiple copies**: The PPD declares `cupsManualCopies`, so copies are passed through to the real queue — all fronts (×N) first, one prompt, then all backs (×N).
 
 ## Dependencies
 
-Runtime: `cups`, `qpdf`, `poppler` (pdfinfo), `gtk4` (≥ 4.10), `systemd`
+Runtime: `cups`, `qpdf`, `poppler` (pdfinfo), `gtk4` (>= 4.10)
 Build: `rust` / `cargo`, `pkg-config`
 
 Arch Linux:
@@ -39,7 +39,7 @@ Arch Linux:
 sudo pacman -S --needed cups qpdf poppler gtk4 rust
 ```
 
-## Installation
+## Manual Integration
 
 ### Arch Linux:
 
@@ -47,37 +47,44 @@ sudo pacman -S --needed cups qpdf poppler gtk4 rust
 paru -S dupriman-git
 ```
 
+DupriMan deliberately does not install files, create queues, manage runtime
+directories, or enable a service.  Packages and administrators own those
+actions so the program works with any init system.
+
 ### From source
 
 ```bash
 cargo build --release
-sudo ./target/release/dupriman install
 ```
 
-`install` places files according to FHS and activates them:
-
-| Path | Description |
-|---|---|
-| `/usr/bin/dupriman` | Main binary |
-| `/usr/lib/cups/backend/dupriman` | CUPS backend (symlink) |
-| `/usr/share/cups/model/dupriman.ppd` | Virtual printer PPD |
-| `/etc/dupriman/config.toml` | System-wide config (not overwritten if exists) |
-| `/usr/lib/systemd/user/dupriman-prompt.service` | Prompt daemon (globally enabled) |
-| `/usr/lib/tmpfiles.d/dupriman.conf` | State/spool directories |
-
-Then start (or re-login) the prompt service:
+Install the binary, CUPS backend symlink, and PPD through your package manager
+or chosen prefix.  Generate the PPD with `dupriman ppd`; generate an annotated
+configuration with `dupriman sample-config`.  Then complete the system-specific
+integration explicitly:
 
 ```bash
-systemctl --user start dupriman-prompt
-dupriman test   # environment self-check
+sudo install -d -o root -g root -m 0711 /run/dupriman
+sudo install -d -o root -g root -m 0700 /var/tmp/dupriman
+sudo install -d -m 0755 /etc/dupriman
+sudo sh -c 'dupriman sample-config > /etc/dupriman/config.toml'
+sudo lpadmin -p dupriman-duplex -v dupriman://duplex \
+  -P /usr/share/cups/model/dupriman.ppd -E
 ```
+
+Set `printer.real` and explicitly list permitted desktop accounts in
+`prompt.allowed_users`.  The CUPS backend must run as root or as the submitting
+user; it otherwise refuses a duplex job before backs can print.  Finally,
+supervise `dupriman prompt` in each permitted graphical session using your init
+system, desktop autostart mechanism, or service manager.  A systemd user unit
+may be useful as a local example, but is not installed or enabled by DupriMan.
 
 ## Configuration
 
 **You should add your physical printer by yourself with CUPS first.**
 
-System-wide: `/etc/dupriman/config.toml`; user-level override: `~/.config/dupriman/config.toml`
-(only write fields you want to override). Full annotated example: `dupriman sample-config`.
+The backend reads only `/etc/dupriman/config.toml` (and an explicit `--config`
+argument).  User-level configuration is for prompt presentation only; do not
+override printer or path settings there.  Full annotated example: `dupriman sample-config`.
 
 Key options (defaults work for most face-down-output laser printers):
 
@@ -99,6 +106,7 @@ even_rotate = 0                  # Short-edge flip: back rotation angle
 [prompt]
 language = "auto"                # Dialog language: auto | en | zh_CN | zh_TW
 timeout_secs = 600               # 0 = wait forever; timeout aborts
+allowed_users = ["alice"]         # Accounts allowed to approve duplex jobs
 ```
 
 ### Internationalization (i18n)
@@ -140,7 +148,7 @@ Test with a 3–4 page document first.
 
 ## Usage
 
-In the print dialog, select **DupriMan-Duplex** and choose duplex mode:
+In the print dialog, select **dupriman-duplex** and choose duplex mode:
 
 - **Off**: forwards directly to the real printer;
 - **Long-edge** (default): for portrait documents flipped along the long edge (backs rotated 180°);
@@ -151,25 +159,17 @@ After fronts are printed, **do not flip or reorder** — take the stack from the
 ## Logs & Troubleshooting
 
 - Backend logs: `journalctl -u cups` or `/var/log/cups/error_log` (`[dupriman]` prefix)
-- Prompt daemon: `journalctl --user -u dupriman-prompt`
+- Prompt daemon: inspect the logs of the session supervisor you chose
 - Self-check: `dupriman test`
 - If the prompt daemon is not running when duplex is requested: fronts print, then the backend waits and safely aborts after `prompt.timeout_secs`.
 - Debug split results: set `print.keep_temp = true`; temporary PDFs are kept in `paths.spool_dir`.
 
-## Uninstallation
+## Removal
 
-### Arch Linux:
-
-```bash
-paru -Rns dupriman-git
-```
-
-### Others
-
-```bash
-sudo dupriman uninstall            # Remove printer/service/system files, keep config
-sudo dupriman uninstall --purge    # Also remove config and binary
-```
+Remove the package with your package manager, stop the prompt service through
+its owning session manager, and remove the CUPS queue with
+`lpadmin -x dupriman-duplex` if it is no longer wanted.  Configuration and
+runtime directories are explicitly administrator-owned state.
 
 ## Development
 
@@ -187,10 +187,10 @@ cupstestppd <(./target/debug/dupriman ppd)   # Validate PPD
    - `Lang::ALL`: add the new variant
    - `Lang::from_env()`: add language detection from `LANG`/`LC_ALL`
    - `Lang::file_stem()`: map to the locale filename stem
-   - `Lang::raw_toml()`: add `include_str!("../i18n/<stem>.toml")` arm
 3. Update the language table in [Internationalization](#internationalization-i18n) (optional).
 
-Missing keys fall back to `en_US` automatically. `install` reads the language list from `Lang::ALL`, so no install script changes are needed.
+Missing keys fall back to `en_US` automatically.  `dupriman ppd` reads the
+language list from `Lang::ALL`, so no packaging-script changes are needed.
 
 ### Tested hardware
 

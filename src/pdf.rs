@@ -1,6 +1,6 @@
 //! PDF 处理：页数统计、奇偶页拆分、旋转。调用系统工具 pdfinfo / qpdf。
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 use std::process::Command;
 
@@ -22,10 +22,7 @@ pub fn page_count(path: &Path) -> Result<u32> {
     let text = String::from_utf8_lossy(&out.stdout);
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("Pages:") {
-            return rest
-                .trim()
-                .parse::<u32>()
-                .context("pdfinfo 页数格式异常");
+            return rest.trim().parse::<u32>().context("pdfinfo 页数格式异常");
         }
     }
     bail!("pdfinfo 输出中未找到 Pages 字段: {}", path.display());
@@ -173,7 +170,11 @@ mod tests {
             write!(buf, "{num} 0 obj\n{body}\nendobj\n").unwrap();
         };
 
-        push_obj(&mut buf, &mut offsets, "<< /Type /Catalog /Pages 2 0 R >>".into());
+        push_obj(
+            &mut buf,
+            &mut offsets,
+            "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        );
         let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", 3 + i)).collect();
         push_obj(
             &mut buf,

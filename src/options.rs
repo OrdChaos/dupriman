@@ -89,7 +89,10 @@ mod tests {
     #[test]
     fn parses_duplex_short_edge() {
         assert_eq!(parse("Duplex=DuplexTumble").mode, DuplexMode::ShortEdge);
-        assert_eq!(parse("sides=two-sided-short-edge").mode, DuplexMode::ShortEdge);
+        assert_eq!(
+            parse("sides=two-sided-short-edge").mode,
+            DuplexMode::ShortEdge
+        );
     }
 
     #[test]
